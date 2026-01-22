@@ -8,18 +8,84 @@
 
 import { $ } from "bun";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
+import { QuotaFetcher, type ProviderQuotaData, type ModelQuota } from "./src/quota-fetcher";
+import { Database } from "bun:sqlite";
 
-const VERSION = "1.0.9";
+const VERSION = "1.0.10";
 
-// Context file path for mid-loop injection
-const stateDir = join(process.cwd(), ".opencode");
+// State and context paths
+let stateDir = process.env.RALPH_STATE_DIR ? resolve(process.env.RALPH_STATE_DIR) : join(process.cwd(), ".opencode");
+
+// Early scan for --state-dir to override
+const stateDirIdx = process.argv.indexOf("--state-dir");
+if (stateDirIdx !== -1 && process.argv[stateDirIdx + 1]) {
+  stateDir = resolve(process.argv[stateDirIdx + 1]);
+}
+
 const statePath = join(stateDir, "ralph-loop.state.json");
 const contextPath = join(stateDir, "ralph-context.md");
 const historyPath = join(stateDir, "ralph-history.json");
 
-// Parse arguments
 const args = process.argv.slice(2);
+
+let dbPathArg = "";
+let runIdArg = "";
+
+
+
+function saveState(state: RalphState): void {
+  if (dbPathArg && runIdArg) {
+      try {
+          const db = new Database(dbPathArg);
+          db.exec("PRAGMA journal_mode = WAL;"); 
+          db.exec("PRAGMA busy_timeout = 5000;"); 
+
+          const stmt = db.prepare("UPDATE runs SET state = $state WHERE id = $id");
+          stmt.run({ $state: JSON.stringify(state), $id: runIdArg });
+          db.close();
+          return;
+      } catch (e) {
+          console.error("Failed to save state to DB:", e);
+          // Fallback to file?
+      }
+  }
+
+  if (!existsSync(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync(statePath, JSON.stringify(state, null, 2));
+}
+
+function loadState(): RalphState | null {
+  if (dbPathArg && runIdArg) {
+      try {
+          const db = new Database(dbPathArg);
+          db.exec("PRAGMA journal_mode = WAL;");
+          db.exec("PRAGMA busy_timeout = 5000;");
+          
+          const stmt = db.prepare("SELECT state FROM runs WHERE id = $id");
+          const row = stmt.get({ $id: runIdArg }) as { state: string };
+          db.close();
+          if (row && row.state) {
+              return JSON.parse(row.state);
+          }
+          return null;
+      } catch (e) {
+           console.error("Failed to load state from DB:", e);
+           // Fallback to file?
+      }
+  }
+
+  if (!existsSync(statePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(statePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
 
 if (args.includes("--help") || args.includes("-h")) {
   console.log(`
@@ -36,19 +102,24 @@ Options:
   --min-iterations N  Minimum iterations before completion allowed (default: 1)
   --max-iterations N  Maximum iterations before stopping (default: unlimited)
   --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
-  --model MODEL       Model to use (e.g., anthropic/claude-sonnet)
+  --model MODEL       Model to use (e.g., anthropic/claude-sonnet), or comma-separated list
   --prompt-file, --file, -f  Read prompt content from a file
   --no-stream         Buffer OpenCode output and print at the end
   --verbose-tools     Print every tool line (disable compact tool summary)
   --no-plugins        Disable non-auth OpenCode plugins for this run
   --no-commit         Don't auto-commit after each iteration
+  --docker-image IMG  Run opencode in a docker container using image IMG
+  --docker-args ARGS  Additional arguments for docker run (e.g. "-v /mnt:/mnt")
+  --devcontainer-service SVC  Run opencode in devcontainer service SVC
   --allow-all         Auto-approve all tool permissions (for non-interactive use)
+  --state-dir PATH    Directory for state and context (default: .opencode)
+  --load-config PATH  Load run configuration from a JSON file
   --version, -v       Show version
   --help, -h          Show this help
 
 Commands:
   --status            Show current Ralph loop status and history
-  --add-context TEXT  Add context for the next iteration (or edit .opencode/ralph-context.md)
+  --add-context TEXT  Add context for the next iteration (or edit ralph-context.md in state dir)
   --clear-context     Clear any pending context
 
 Examples:
@@ -157,7 +228,9 @@ if (args.includes("--status")) {
     console.log(`   Started:      ${state.startedAt}`);
     console.log(`   Elapsed:      ${elapsedStr}`);
     console.log(`   Promise:      ${state.completionPromise}`);
-    if (state.model) console.log(`   Model:        ${state.model}`);
+    if (state.model) {
+      console.log(`   Model:        ${state.model} ${state.modelQueue && state.modelQueue.length > 1 ? `(Model ${state.currentModelIndex + 1}/${state.modelQueue.length} in queue)` : ""}`);
+    }
     console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
   } else {
     console.log(`⏹️  No active loop`);
@@ -286,6 +359,12 @@ let promptFile = "";
 let streamOutput = true;
 let verboseTools = false;
 let promptSource = "";
+let dockerImage = "";
+let dockerArgs: string[] = [];
+let devcontainerService = "";
+let currentProc: ReturnType<typeof Bun.spawn> | null = null;
+let containerName = "";
+let loadConfigPath = "";
 
 const promptParts: string[] = [];
 
@@ -319,7 +398,8 @@ for (let i = 0; i < args.length; i++) {
       console.error("Error: --model requires a value");
       process.exit(1);
     }
-    model = val;
+    // Allow comma-separated list of models
+    model = val; // Keep original string for display/logging if needed, or primarily use the queue
   } else if (arg === "--prompt-file" || arg === "--file" || arg === "-f") {
     const val = args[++i];
     if (!val) {
@@ -339,6 +419,58 @@ for (let i = 0; i < args.length; i++) {
     disablePlugins = true;
   } else if (arg === "--allow-all") {
     allowAllPermissions = true;
+  } else if (arg === "--state-dir") {
+    i++; // Skip value, handled at startup
+  } else if (arg === "--load-config") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --load-config requires a file path");
+      process.exit(1);
+    }
+    loadConfigPath = val;
+  } else if (arg === "--docker-image") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --docker-image requires an image name");
+      process.exit(1);
+    }
+    dockerImage = val;
+  } else if (arg === "--docker-args") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --docker-args requires a value");
+      process.exit(1);
+    }
+    // Simple split by space, respecting quotes would be better but keeping it simple for now
+    // Users can pass multiple --docker-args if needed or we can accept simple string
+    // Let's rely on simple split for now, or allow multiple flags? 
+    // Let's assume one string with spaces. 
+    // Matches sequences of non-whitespace OR quoted strings
+    const matches = val.match(/(?:[^\s"]+|"[^"]*")+/g);
+    if (matches) {
+      dockerArgs.push(...matches.map(s => s.replace(/^"|"$/g, "")));
+    }
+  } else if (arg === "--devcontainer-service") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --devcontainer-service requires a service name");
+      process.exit(1);
+    }
+    devcontainerService = val;
+  } else if (arg === "--db-path") {
+    const val = args[++i];
+    if (!val) {
+        console.error("Error: --db-path requires a value");
+        process.exit(1);
+    }
+    dbPathArg = val;
+  } else if (arg === "--run-id") {
+    const val = args[++i];
+    if (!val) {
+        console.error("Error: --run-id requires a value");
+        process.exit(1);
+    }
+    runIdArg = val;
   } else if (arg.startsWith("-")) {
     console.error(`Error: Unknown option: ${arg}`);
     console.error("Run 'ralph --help' for available options");
@@ -376,6 +508,47 @@ function readPromptFile(path: string): string {
   }
 }
 
+// Load config if requested
+if (loadConfigPath) {
+  if (!existsSync(loadConfigPath)) {
+    console.error(`Error: Config file not found: ${loadConfigPath}`);
+    process.exit(1);
+  }
+  try {
+    const config = JSON.parse(readFileSync(loadConfigPath, "utf-8"));
+    if (config.run) {
+      const r = config.run;
+      if (r.prompt) prompt = r.prompt;
+      if (r.modelQueue) model = r.modelQueue.join(",");
+      if (r.minIterations !== undefined) minIterations = r.minIterations;
+      if (r.maxIterations !== undefined) maxIterations = r.maxIterations;
+      if (r.completionPromise) completionPromise = r.completionPromise;
+      if (r.mode === "docker" && r.docker) {
+        dockerImage = r.docker.image || dockerImage;
+        if (r.docker.args) {
+           const matches = r.docker.args.match(/(?:[^\s"]+|"[^"]*")+/g);
+           if (matches) {
+             dockerArgs.push(...matches.map((s: string) => s.replace(/^"|"$/g, "")));
+           }
+        }
+      } else if (r.mode === "devcontainer" && r.devcontainer) {
+        devcontainerService = r.devcontainer.service || devcontainerService;
+      }
+      
+      if (r.flags) {
+        if (r.flags.noCommit !== undefined) autoCommit = !r.flags.noCommit;
+        if (r.flags.verboseTools !== undefined) verboseTools = r.flags.verboseTools;
+        if (r.flags.noPlugins !== undefined) disablePlugins = r.flags.noPlugins;
+        if (r.flags.allowAll !== undefined) allowAllPermissions = r.flags.allowAll;
+        if (r.flags.noStream !== undefined) streamOutput = !r.flags.noStream;
+      }
+    }
+  } catch (e) {
+    console.error(`Error: Failed to parse config file: ${loadConfigPath}`);
+    process.exit(1);
+  }
+}
+
 if (promptFile) {
   promptSource = promptFile;
   prompt = readPromptFile(promptFile);
@@ -408,26 +581,12 @@ interface RalphState {
   prompt: string;
   startedAt: string;
   model: string;
+  modelQueue: string[];     // NEW: List of models to try in priority order
+  currentModelIndex: number; // NEW: Index of current model in queue
 }
 
 // Create or update state
-function saveState(state: RalphState): void {
-  if (!existsSync(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
-}
 
-function loadState(): RalphState | null {
-  if (!existsSync(statePath)) {
-    return null;
-  }
-  try {
-    return JSON.parse(readFileSync(statePath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
 
 function clearState(): void {
   if (existsSync(statePath)) {
@@ -497,7 +656,100 @@ function ensureRalphConfig(options: { filterPlugins?: boolean; allowAllPermissio
   }
 
   writeFileSync(configPath, JSON.stringify(config, null, 2));
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
   return configPath;
+}
+
+// --- Quota Management ---
+
+async function checkAndSortModels(models: string[]): Promise<string[]> {
+  console.log("Checking model quotas...");
+  const fetcher = new QuotaFetcher();
+  const quotas = await fetcher.fetchAll();
+  
+  const validModels: string[] = [];
+  const lowQuotaModels: string[] = [];
+
+  for (const model of models) {
+    const [provider, modelName] = model.split("/");
+    const p = provider.toLowerCase();
+    
+    let hasQuota = true; // Default to true if no quota info found
+    let percentage = 100;
+
+    if (quotas[p]) {
+      const q = quotas[p];
+      if (q.isForbidden) {
+        hasQuota = false;
+        percentage = 0;
+      } else {
+        // Provider specific logic
+        if (p === "openai" || p === "codex") {
+           // Check session quota
+           const session = q.models.find(m => m.name.includes("session"));
+           if (session) {
+             percentage = session.percentage;
+           }
+        } else if (p === "google") {
+           // Fuzzy match model name
+           // CLI: gemini-3-pro -> Quota: gemini-3-pro-high
+           // Need to handle modelName being potentially empty or simple
+           if (modelName) {
+               const match = q.models.find(m => m.name.includes(modelName) || modelName.includes(m.name));
+               if (match) {
+                 percentage = match.percentage;
+               }
+           }
+        }
+        
+        if (percentage < 10) hasQuota = false;
+      }
+    }
+
+    if (hasQuota) {
+      validModels.push(model);
+    } else {
+      console.warn(`⚠️  Skipping model ${model} due to low/exhausted quota (${percentage.toFixed(1)}%)`);
+      lowQuotaModels.push(model);
+    }
+  }
+  
+  if (validModels.length === 0) {
+    console.warn("⚠️  All requested models have low quota! Falling back to original list.");
+    return models;
+  }
+  
+  return validModels;
+}
+
+// Provider Configuration for Fallback
+interface ProviderErrorConfig {
+  pattern: string;
+}
+
+interface ProviderConfig {
+  [providerName: string]: ProviderErrorConfig;
+}
+
+function loadProviderConfig(stateDir: string): ProviderConfig {
+  const defaults: ProviderConfig = {
+    anthropic: { pattern: "overloaded_error|rate_limit_error|429" },
+    openai: { pattern: "rate_limit_exceeded|insufficient_quota|429" },
+    google: { pattern: "All Antigravity endpoints failed" },
+    mistral: { pattern: "rate_limit_exceeded|429" },
+  };
+
+  const userConfigPath = join(stateDir, "ralph-providers.json");
+  if (existsSync(userConfigPath)) {
+    try {
+      const userConfig = JSON.parse(readFileSync(userConfigPath, "utf-8"));
+      // Deep merge or just shallow merge? Shallow merge of providers is likely enough.
+      return { ...defaults, ...userConfig };
+    } catch (e) {
+      console.warn("⚠️  Failed to parse ralph-providers.json, using defaults");
+    }
+  }
+  return defaults;
 }
 
 // Build the full prompt with iteration context
@@ -650,6 +902,7 @@ async function streamProcessOutput(
     iterationStart: number;
   },
 ): Promise<{ stdoutText: string; stderrText: string; toolCounts: Map<string, number> }> {
+  console.log("DEBUG: streamProcessOutput starting...");
   const toolCounts = new Map<string, number>();
   let stdoutText = "";
   let stderrText = "";
@@ -741,14 +994,14 @@ async function streamProcessOutput(
   try {
     await Promise.all([
       streamText(
-        proc.stdout,
+        proc.stdout as any,
         chunk => {
           stdoutText += chunk;
         },
         false,
       ),
       streamText(
-        proc.stderr,
+        proc.stderr as any,
         chunk => {
           stderrText += chunk;
         },
@@ -873,6 +1126,17 @@ async function runRalphLoop(): Promise<void> {
 ╚══════════════════════════════════════════════════════════════════╝
 `);
 
+  // Check quotas if needed
+  let initialQueue = model ? model.split(',') : [];
+  if (initialQueue.length > 0) {
+      try {
+        initialQueue = await checkAndSortModels(initialQueue);
+      } catch (e) {
+        console.warn("⚠️  Failed to check quotas, proceeding with original list:", e);
+      }
+  }
+  const initialModel = initialQueue.length > 0 ? initialQueue[0] : (model ? model.split(',')[0] : "");
+
   // Initialize state
   const state: RalphState = {
     active: true,
@@ -882,7 +1146,9 @@ async function runRalphLoop(): Promise<void> {
     completionPromise,
     prompt,
     startedAt: new Date().toISOString(),
-    model,
+    model: initialModel, 
+    modelQueue: initialQueue,
+    currentModelIndex: 0,
   };
 
   saveState(state);
@@ -941,6 +1207,22 @@ async function runRalphLoop(): Promise<void> {
 
   // Main loop
   while (true) {
+    // Reload state from disk to pick up external changes (e.g. from ralph-web)
+    const diskState = loadState();
+    if (diskState) {
+        // Adopt fields that can be changed dynamically
+        if (diskState.modelQueue) state.modelQueue = diskState.modelQueue;
+        if (diskState.completionPromise) state.completionPromise = diskState.completionPromise;
+        if (diskState.maxIterations !== undefined) {
+            state.maxIterations = diskState.maxIterations;
+            maxIterations = diskState.maxIterations; // Update local var too
+        }
+        // Ensure currentModelIndex is valid for new queue
+        if (state.modelQueue && state.currentModelIndex >= state.modelQueue.length) {
+            state.currentModelIndex = Math.max(0, state.modelQueue.length - 1);
+        }
+    }
+
     // Check max iterations
     if (maxIterations > 0 && state.iteration > maxIterations) {
       console.log(`\n╔══════════════════════════════════════════════════════════════════╗`);
@@ -968,13 +1250,9 @@ async function runRalphLoop(): Promise<void> {
     const iterationStart = Date.now();
 
     try {
-      // Build command arguments
-      const cmdArgs = ["run"];
-      if (model) {
-        cmdArgs.push("-m", model);
-      }
-      cmdArgs.push(fullPrompt);
 
+
+      // Helper to match environment construction
       const env = { ...process.env };
       if (disablePlugins || allowAllPermissions) {
         env.OPENCODE_CONFIG = ensureRalphConfig({
@@ -983,21 +1261,258 @@ async function runRalphLoop(): Promise<void> {
         });
       }
 
-      // Run opencode using spawn for better argument handling
-      // stdin is inherited so users can respond to permission prompts if needed
-      currentProc = Bun.spawn(["opencode", ...cmdArgs], {
+      // Helper to build spawn arguments
+      const buildOpencodeCmd = (opencodeArgs: string[], options: { interactive?: boolean; tty?: boolean } = {}) => {
+          const { interactive = true, tty = interactive } = options;
+          let executable = "opencode";
+          let argsToSpawn = [...opencodeArgs];
+          
+          if (dockerImage) {
+            executable = "docker";
+            containerName = `ralph-runner-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            const cwd = process.cwd();
+            
+            // RESET argsToSpawn for Docker command structure
+            argsToSpawn = ["run", "--rm"];
+
+            if (tty) {
+               argsToSpawn.push("-t");
+            }
+            if (interactive) {
+                argsToSpawn.push("-i");
+            }
+
+            argsToSpawn.push("--name", containerName);
+
+            // Volume Mount Strategy:
+            // 1. Always include user-provided arguments intact (dockerArgs)
+            // 2. Default mount CWD -> CWD unless overridden by user args
+            
+            // Check for explicit workdir in user args
+            const hasCustomWorkDir = dockerArgs.some(a => a.includes("-w") || a.includes("--workdir"));
+            
+            // If user did NOT specify a custom workdir, we assume standard behavior:
+            // Mount the partial CWD to itself and set it as workdir.
+            // If they DID specify one, we assume they are handling mounts for it (e.g. -v /host/path:/container/path -w /container/path)
+            if (!hasCustomWorkDir) {
+                argsToSpawn.push("-v", `${cwd}:${cwd}`);
+                argsToSpawn.push("-w", cwd);
+            }
+
+            // Mount OpenCode config if present
+            if (env.OPENCODE_CONFIG && !argsToSpawn.some(a => a.includes(env.OPENCODE_CONFIG as string))) {
+                 argsToSpawn.push("-v", `${env.OPENCODE_CONFIG}:${env.OPENCODE_CONFIG}`);
+            }
+
+            // Mount OpenCode data directory if it exists (CRITICAL for model access + tools)
+            const opencodeDataDir = join(process.env.HOME || "", ".local/share/opencode");
+            if (existsSync(opencodeDataDir)) {
+                argsToSpawn.push("-v", `${opencodeDataDir}:${opencodeDataDir}`);
+            }
+
+            // Mount OpenCode config directory if it exists (CRITICAL for provider config like antigravity-accounts.json)
+            const opencodeConfigDir = join(process.env.HOME || "", ".config/opencode");
+            if (existsSync(opencodeConfigDir)) {
+                 argsToSpawn.push("-v", `${opencodeConfigDir}:${opencodeConfigDir}`);
+            }
+
+            // Add all user-provided docker args (including ports, other volumes)
+            // SPREAD THEM DIRECTLY. Logic elsewhere parsing them might be flawed/splitting strings wrong.
+            // But here we rely on them being in dockerArgs array correctly.
+            argsToSpawn.push(
+              "--env", "OPENCODE_CONFIG",
+              ...dockerArgs,
+              // Pass XDG paths explicitly so opencode finds mounted config directories
+              // DON'T pass HOME - it causes opencode to look for ~/.cache, ~/.local/state which aren't mounted
+              ...(process.env.XDG_CONFIG_HOME ? ["--env", `XDG_CONFIG_HOME=${process.env.XDG_CONFIG_HOME}`] : 
+                  process.env.HOME ? ["--env", `XDG_CONFIG_HOME=${process.env.HOME}/.config`] : []),
+              ...(process.env.XDG_DATA_HOME ? ["--env", `XDG_DATA_HOME=${process.env.XDG_DATA_HOME}`] : 
+                  process.env.HOME ? ["--env", `XDG_DATA_HOME=${process.env.HOME}/.local/share`] : []),
+              // Set XDG_STATE_HOME and XDG_CACHE_HOME to /tmp to avoid permission issues (these dirs aren't mounted)
+              "--env", "XDG_STATE_HOME=/tmp/opencode-state",
+              "--env", "XDG_CACHE_HOME=/tmp/opencode-cache",
+              // Pass API keys and other relevant env vars
+              ...Object.keys(process.env)
+                .filter(k => k.startsWith("OPENAI_") || k.startsWith("ANTHROPIC_") || k.startsWith("GOOGLE_") || k === "NVM_DIR" || k === "BUN_INSTALL")
+                .flatMap(k => ["--env", k]),
+              dockerImage,
+              "opencode", ...opencodeArgs
+            );
+          } else if (devcontainerService) {
+            executable = "devcontainer";
+            argsToSpawn = [
+                "exec", 
+                "--workspace-folder", process.cwd(),
+                "--service-name", devcontainerService,
+                "opencode", ...opencodeArgs
+            ];
+          }
+          return { executable, argsToSpawn };
+      };
+
+      // Run 'opencode models' before the first iteration (but only once)
+      if (state.iteration === 1) {
+          console.log("\n📋 Checking available models (opencode models)...");
+          // Disable interactive and TTY for models check to prevent hanging/pagination
+          const { executable: modExec, argsToSpawn: modArgs } = buildOpencodeCmd(["models"], { interactive: false, tty: false });
+          
+          // Use synchronous spawn or await promise to block
+          console.log(`DEBUG: Running ${modExec} ${modArgs.join(" ")}`);
+          const modProc = Bun.spawn([modExec, ...modArgs], {
+              env,
+              stdin: "ignore",
+              stdout: "inherit",
+              stderr: "inherit"
+          });
+          await modProc.exited;
+          console.log("────────────────────────────────────────────────────────────────────");
+      }
+
+      // Build main command arguments
+      const cmdArgs = ["run"];
+      
+      // Determine current model from queue
+      let currentModel = state.model;
+      if (state.modelQueue && state.modelQueue.length > 0) {
+        // Ensure index is within bounds
+        if (state.currentModelIndex >= state.modelQueue.length) {
+            state.currentModelIndex = state.modelQueue.length - 1;
+        }
+        currentModel = state.modelQueue[state.currentModelIndex];
+        // Sync single model field for backward compatibility/logging
+        state.model = currentModel;
+        saveState(state); // Update state on disk immediately
+      }
+
+      if (currentModel) {
+        cmdArgs.push("-m", currentModel);
+      }
+      cmdArgs.push(fullPrompt);
+
+      // Build command using helper (Force non-interactive to fail fast on prompts, but use TTY for unbuffered output)
+      const { executable, argsToSpawn } = buildOpencodeCmd(cmdArgs, { interactive: false, tty: true });
+
+      // Log the command for debugging
+      console.log(`\nCORE EXECUTOR: Spawning: ${executable} ${argsToSpawn.join(" ")}`);
+      // Flush logging
+      await new Promise(r => setTimeout(r, 100));
+
+      // DEBUG: Restoring pipe for capture, config restored, TTY enabled
+      currentProc = Bun.spawn([executable, ...argsToSpawn], {
         env,
-        stdin: "inherit",
+        stdin: "ignore", 
         stdout: "pipe",
         stderr: "pipe",
       });
       const proc = currentProc;
       const exitCodePromise = proc.exited;
+
+      // Quota Monitoring
+      let quotaInterrupted = false;
+      const quotaInterval = setInterval(async () => {
+        if (!state.model) return;
+        
+        // Don't check if we haven't been running long? 
+        // 10m interval implies we check 10m *after* start. 
+        
+        try {
+           const fetcher = new QuotaFetcher();
+           const quotas = await fetcher.fetchAll();
+           
+           // Check availability of current model
+           // Reuse logic from checkAndSortModels approximately?
+           // Or just check specificity.
+           
+           const currentModel = state.model;
+           const [provider, modelName] = currentModel.split("/");
+           const p = provider.toLowerCase();
+           
+           let percentage = 100;
+           let isForbidden = false;
+
+           if (quotas[p]) {
+               const q = quotas[p];
+               if (q.isForbidden) isForbidden = true;
+               else {
+                   if (p === "openai" || p === "codex") {
+                       const session = q.models.find(m => m.name.includes("session"));
+                       if (session) percentage = session.percentage;
+                   } else if (p === "google") {
+                        if (modelName) {
+                           const match = q.models.find(m => m.name.includes(modelName));
+                           if (match) percentage = match.percentage;
+                        }
+                   }
+               }
+           }
+           
+           if (isForbidden || percentage < 5) { // < 5% trigger switch
+               console.log(`\n⚠️  Active Quota Monitor: Model ${currentModel} exhausted (${Math.round(percentage)}%). Switching...`);
+               
+               if (state.modelQueue && state.currentModelIndex < state.modelQueue.length - 1) {
+                   state.currentModelIndex++;
+                   state.model = state.modelQueue[state.currentModelIndex];
+                   saveState(state);
+                   
+                   quotaInterrupted = true;
+                   proc.kill(); // This will trigger exit
+               } else {
+                   console.log("   No more models in queue. Continuing with current model until failure.");
+               }
+           }
+           
+        } catch (e) {
+            // ignore quota fetch errors during run
+        }
+      }, 10 * 60 * 1000); // 10 minutes check
+
+      // Ensure we clear interval on exit
+      exitCodePromise.then(() => clearInterval(quotaInterval));
+
+      // Iteration Skip Signal (Every 1s)
+      const skipSignalPath = join(stateDir, "ralph-skip.signal");
+      const signalInterval = setInterval(() => {
+          if (existsSync(skipSignalPath)) {
+               console.log("\n⏩ Skip signal received. Skipping iteration...");
+               try {
+                  require("fs").unlinkSync(skipSignalPath);
+               } catch {}
+               
+               quotaInterrupted = true; // Treat as "interrupted" so we retry/continue loop
+               
+               // Robust Kill Strategy
+               if (dockerImage && containerName) {
+                   console.log(`Killing docker container: ${containerName}`);
+                   try {
+                     Bun.spawnSync(["docker", "kill", containerName], {
+                         stderr: "ignore", stdout: "ignore"
+                     });
+                   } catch (e) {
+                     // ignore
+                   }
+               }
+               
+               // Force kill the process object as well
+               try {
+                   // Try graceful first, then force
+                   proc.kill(); 
+                   if (proc.pid) {
+                       // Give it a tiny moment or just SIGKILL immediately?
+                       // User wants "Skip NOW", so SIGKILL is appropriate.
+                       process.kill(proc.pid, "SIGKILL");
+                   }
+               } catch (e) {
+                   // Ignore if already dead
+               }
+          }
+      }, 1000);
+      exitCodePromise.then(() => clearInterval(signalInterval));
+
       let result = "";
       let stderr = "";
       let toolCounts = new Map<string, number>();
 
-      if (streamOutput) {
+      if (streamOutput && proc.stdout) {
         const streamed = await streamProcessOutput(proc, {
           compactTools: !verboseTools,
           toolSummaryIntervalMs: 3000,
@@ -1007,11 +1522,13 @@ async function runRalphLoop(): Promise<void> {
         result = streamed.stdoutText;
         stderr = streamed.stderrText;
         toolCounts = streamed.toolCounts;
-      } else {
-        const stdoutPromise = new Response(proc.stdout).text();
-        const stderrPromise = new Response(proc.stderr).text();
+      } else if (proc.stdout) {
+        const stdoutPromise = new Response(proc.stdout as any).text();
+        const stderrPromise = new Response(proc.stderr as any).text();
         [result, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
         toolCounts = collectToolSummaryFromText(`${result}\n${stderr}`);
+      } else {
+        console.log("DEBUG: Output streaming skipped (stdout is inherit)");
       }
 
       const exitCode = await exitCodePromise;
@@ -1025,6 +1542,41 @@ async function runRalphLoop(): Promise<void> {
       }
 
       const combinedOutput = `${result}\n${stderr}`;
+      
+      // Multi-Model Fallback Logic
+      if (state.modelQueue && state.modelQueue.length > 1) {
+        const providers = loadProviderConfig(stateDir);
+        const currentModel = state.modelQueue[state.currentModelIndex];
+        // Simple provider extraction: assumes format "provider/model" or just "provider"
+        // If not containing '/', valid heuristics might vary, but let's try to match whole string or split
+        const providerMatch = currentModel.match(/^([^/]+)/); 
+        const providerName = providerMatch ? providerMatch[1].toLowerCase() : currentModel.toLowerCase();
+
+        const config = providers[providerName];
+        if (config) {
+             const errorPattern = new RegExp(config.pattern, 'i');
+             if (errorPattern.test(combinedOutput)) {
+                 console.log(`\n⚠️  Quota/Rate Limit detected for model ${currentModel} using pattern "${config.pattern}"`);
+                 
+                 if (state.currentModelIndex < state.modelQueue.length - 1) {
+                     console.log(`   Switching to next model: ${state.modelQueue[state.currentModelIndex + 1]}...`);
+                     
+                     // Advance model index
+                     state.currentModelIndex++;
+                     state.model = state.modelQueue[state.currentModelIndex];
+                     saveState(state);
+                     
+                     // OPTIONAL: We could continue immediately to retry the iteration with the new model
+                     // instead of marking this one as failed/completed.
+                     // For now, let's just loop. The next iteration will pick up the new model.
+                     // To avoid "wasting" an iteration count on a rate limit, we could arguably decrement state.iteration
+                     // but that messes with history tracking. Let's keep it simple.
+                 } else {
+                     console.warn(`   ⚠️  All provided models have been exhausted or last model failed.`);
+                 }
+             }
+        }
+      }
       const completionDetected = checkCompletion(combinedOutput, completionPromise);
 
       const iterationDuration = Date.now() - iterationStart;
@@ -1107,7 +1659,23 @@ async function runRalphLoop(): Promise<void> {
       }
 
       if (exitCode !== 0) {
-        console.warn(`\n⚠️  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
+        if (quotaInterrupted) {
+             console.log("   Restarting iteration with new model...");
+             // Skip history recording for this interrupted run, or maybe record it as skipped?
+             // Let's just continue, which means we skip history.push (oops, history push is below)
+             // We need to `continue` the outer while loop *before* history recording logic 
+             // if we don't want to record a failure.
+             
+             // But we need to cleanup (snapshots etc). 
+             // Actually simplest is to just let it loop, but ensure we don't treat non-zero exit code as a crash.
+        } else {
+             console.warn(`\n⚠️  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
+        }
+      }
+
+      // If interrupted by quota, we don't want to record this as a completed iteration
+      if (quotaInterrupted) {
+          continue; 
       }
 
       // Check for completion
@@ -1194,9 +1762,34 @@ async function runRalphLoop(): Promise<void> {
   }
 }
 
+// Handle graceful shutdown
+function cleanupAndExit() {
+  console.log("\nGracefully stopping Ralph loop...");
+  
+  if (containerName) {
+     console.log(`Stopping container ${containerName}...`);
+     try {
+       Bun.spawnSync(["docker", "kill", containerName]);
+     } catch (e) {
+       // ignore
+     }
+  }
+
+  if (currentProc) {
+    try {
+      currentProc.kill(); 
+    } catch (e) {
+      // ignore
+    }
+  }
+  process.exit(130); // Standard exit code for SIGINT
+}
+
+process.on("SIGINT", cleanupAndExit);
+process.on("SIGTERM", cleanupAndExit);
+
 // Run the loop
-runRalphLoop().catch(error => {
-  console.error("Fatal error:", error);
-  clearState();
+runRalphLoop().catch((err: unknown) => {
+  console.error("Fatal error:", err);
   process.exit(1);
 });

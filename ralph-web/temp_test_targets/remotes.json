@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Secure Target",
+    "baseUrl": "http://secure:3000",
+    "token": "enc:1369574685be0dc20613d9c63cd51c02:2b0e2f633c7aa565b2926cdbb72d46a8",
+    "id": "target_1768998311009_33hgi4izz",
+    "health": {
+      "status": "unknown",
+      "lastCheck": "2026-01-21T12:25:11.009Z"
+    }
+  }
+]

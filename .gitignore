@@ -80,3 +80,9 @@ node_modules/
 # Build artifacts
 bin/*
 !bin/ralph.js
+ralph-web/.opencode/ralph-web/
+redbox/build_context/
+redbox/build_context/
+
+.opencode/
+.test-state-env/

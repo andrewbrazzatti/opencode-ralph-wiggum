@@ -1,0 +1,3202 @@
+#!/usr/bin/env bun
+// @bun
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined")
+    return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
+// ralph.ts
+var {$ } = globalThis.Bun;
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync, statSync } from "fs";
+import { join as join2 } from "path";
+
+// node:path
+function assertPath(path) {
+  if (typeof path !== "string")
+    throw TypeError("Path must be a string. Received " + JSON.stringify(path));
+}
+function normalizeStringPosix(path, allowAboveRoot) {
+  var res = "", lastSegmentLength = 0, lastSlash = -1, dots = 0, code;
+  for (var i = 0;i <= path.length; ++i) {
+    if (i < path.length)
+      code = path.charCodeAt(i);
+    else if (code === 47)
+      break;
+    else
+      code = 47;
+    if (code === 47) {
+      if (lastSlash === i - 1 || dots === 1)
+        ;
+      else if (lastSlash !== i - 1 && dots === 2) {
+        if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 || res.charCodeAt(res.length - 2) !== 46) {
+          if (res.length > 2) {
+            var lastSlashIndex = res.lastIndexOf("/");
+            if (lastSlashIndex !== res.length - 1) {
+              if (lastSlashIndex === -1)
+                res = "", lastSegmentLength = 0;
+              else
+                res = res.slice(0, lastSlashIndex), lastSegmentLength = res.length - 1 - res.lastIndexOf("/");
+              lastSlash = i, dots = 0;
+              continue;
+            }
+          } else if (res.length === 2 || res.length === 1) {
+            res = "", lastSegmentLength = 0, lastSlash = i, dots = 0;
+            continue;
+          }
+        }
+        if (allowAboveRoot) {
+          if (res.length > 0)
+            res += "/..";
+          else
+            res = "..";
+          lastSegmentLength = 2;
+        }
+      } else {
+        if (res.length > 0)
+          res += "/" + path.slice(lastSlash + 1, i);
+        else
+          res = path.slice(lastSlash + 1, i);
+        lastSegmentLength = i - lastSlash - 1;
+      }
+      lastSlash = i, dots = 0;
+    } else if (code === 46 && dots !== -1)
+      ++dots;
+    else
+      dots = -1;
+  }
+  return res;
+}
+function _format(sep, pathObject) {
+  var dir = pathObject.dir || pathObject.root, base = pathObject.base || (pathObject.name || "") + (pathObject.ext || "");
+  if (!dir)
+    return base;
+  if (dir === pathObject.root)
+    return dir + base;
+  return dir + sep + base;
+}
+function resolve() {
+  var resolvedPath = "", resolvedAbsolute = false, cwd;
+  for (var i = arguments.length - 1;i >= -1 && !resolvedAbsolute; i--) {
+    var path;
+    if (i >= 0)
+      path = arguments[i];
+    else {
+      if (cwd === undefined)
+        cwd = process.cwd();
+      path = cwd;
+    }
+    if (assertPath(path), path.length === 0)
+      continue;
+    resolvedPath = path + "/" + resolvedPath, resolvedAbsolute = path.charCodeAt(0) === 47;
+  }
+  if (resolvedPath = normalizeStringPosix(resolvedPath, !resolvedAbsolute), resolvedAbsolute)
+    if (resolvedPath.length > 0)
+      return "/" + resolvedPath;
+    else
+      return "/";
+  else if (resolvedPath.length > 0)
+    return resolvedPath;
+  else
+    return ".";
+}
+function normalize(path) {
+  if (assertPath(path), path.length === 0)
+    return ".";
+  var isAbsolute = path.charCodeAt(0) === 47, trailingSeparator = path.charCodeAt(path.length - 1) === 47;
+  if (path = normalizeStringPosix(path, !isAbsolute), path.length === 0 && !isAbsolute)
+    path = ".";
+  if (path.length > 0 && trailingSeparator)
+    path += "/";
+  if (isAbsolute)
+    return "/" + path;
+  return path;
+}
+function isAbsolute(path) {
+  return assertPath(path), path.length > 0 && path.charCodeAt(0) === 47;
+}
+function join() {
+  if (arguments.length === 0)
+    return ".";
+  var joined;
+  for (var i = 0;i < arguments.length; ++i) {
+    var arg = arguments[i];
+    if (assertPath(arg), arg.length > 0)
+      if (joined === undefined)
+        joined = arg;
+      else
+        joined += "/" + arg;
+  }
+  if (joined === undefined)
+    return ".";
+  return normalize(joined);
+}
+function relative(from, to) {
+  if (assertPath(from), assertPath(to), from === to)
+    return "";
+  if (from = resolve(from), to = resolve(to), from === to)
+    return "";
+  var fromStart = 1;
+  for (;fromStart < from.length; ++fromStart)
+    if (from.charCodeAt(fromStart) !== 47)
+      break;
+  var fromEnd = from.length, fromLen = fromEnd - fromStart, toStart = 1;
+  for (;toStart < to.length; ++toStart)
+    if (to.charCodeAt(toStart) !== 47)
+      break;
+  var toEnd = to.length, toLen = toEnd - toStart, length = fromLen < toLen ? fromLen : toLen, lastCommonSep = -1, i = 0;
+  for (;i <= length; ++i) {
+    if (i === length) {
+      if (toLen > length) {
+        if (to.charCodeAt(toStart + i) === 47)
+          return to.slice(toStart + i + 1);
+        else if (i === 0)
+          return to.slice(toStart + i);
+      } else if (fromLen > length) {
+        if (from.charCodeAt(fromStart + i) === 47)
+          lastCommonSep = i;
+        else if (i === 0)
+          lastCommonSep = 0;
+      }
+      break;
+    }
+    var fromCode = from.charCodeAt(fromStart + i), toCode = to.charCodeAt(toStart + i);
+    if (fromCode !== toCode)
+      break;
+    else if (fromCode === 47)
+      lastCommonSep = i;
+  }
+  var out = "";
+  for (i = fromStart + lastCommonSep + 1;i <= fromEnd; ++i)
+    if (i === fromEnd || from.charCodeAt(i) === 47)
+      if (out.length === 0)
+        out += "..";
+      else
+        out += "/..";
+  if (out.length > 0)
+    return out + to.slice(toStart + lastCommonSep);
+  else {
+    if (toStart += lastCommonSep, to.charCodeAt(toStart) === 47)
+      ++toStart;
+    return to.slice(toStart);
+  }
+}
+function _makeLong(path) {
+  return path;
+}
+function dirname(path) {
+  if (assertPath(path), path.length === 0)
+    return ".";
+  var code = path.charCodeAt(0), hasRoot = code === 47, end = -1, matchedSlash = true;
+  for (var i = path.length - 1;i >= 1; --i)
+    if (code = path.charCodeAt(i), code === 47) {
+      if (!matchedSlash) {
+        end = i;
+        break;
+      }
+    } else
+      matchedSlash = false;
+  if (end === -1)
+    return hasRoot ? "/" : ".";
+  if (hasRoot && end === 1)
+    return "//";
+  return path.slice(0, end);
+}
+function basename(path, ext) {
+  if (ext !== undefined && typeof ext !== "string")
+    throw TypeError('"ext" argument must be a string');
+  assertPath(path);
+  var start = 0, end = -1, matchedSlash = true, i;
+  if (ext !== undefined && ext.length > 0 && ext.length <= path.length) {
+    if (ext.length === path.length && ext === path)
+      return "";
+    var extIdx = ext.length - 1, firstNonSlashEnd = -1;
+    for (i = path.length - 1;i >= 0; --i) {
+      var code = path.charCodeAt(i);
+      if (code === 47) {
+        if (!matchedSlash) {
+          start = i + 1;
+          break;
+        }
+      } else {
+        if (firstNonSlashEnd === -1)
+          matchedSlash = false, firstNonSlashEnd = i + 1;
+        if (extIdx >= 0)
+          if (code === ext.charCodeAt(extIdx)) {
+            if (--extIdx === -1)
+              end = i;
+          } else
+            extIdx = -1, end = firstNonSlashEnd;
+      }
+    }
+    if (start === end)
+      end = firstNonSlashEnd;
+    else if (end === -1)
+      end = path.length;
+    return path.slice(start, end);
+  } else {
+    for (i = path.length - 1;i >= 0; --i)
+      if (path.charCodeAt(i) === 47) {
+        if (!matchedSlash) {
+          start = i + 1;
+          break;
+        }
+      } else if (end === -1)
+        matchedSlash = false, end = i + 1;
+    if (end === -1)
+      return "";
+    return path.slice(start, end);
+  }
+}
+function extname(path) {
+  assertPath(path);
+  var startDot = -1, startPart = 0, end = -1, matchedSlash = true, preDotState = 0;
+  for (var i = path.length - 1;i >= 0; --i) {
+    var code = path.charCodeAt(i);
+    if (code === 47) {
+      if (!matchedSlash) {
+        startPart = i + 1;
+        break;
+      }
+      continue;
+    }
+    if (end === -1)
+      matchedSlash = false, end = i + 1;
+    if (code === 46) {
+      if (startDot === -1)
+        startDot = i;
+      else if (preDotState !== 1)
+        preDotState = 1;
+    } else if (startDot !== -1)
+      preDotState = -1;
+  }
+  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)
+    return "";
+  return path.slice(startDot, end);
+}
+function format(pathObject) {
+  if (pathObject === null || typeof pathObject !== "object")
+    throw TypeError('The "pathObject" argument must be of type Object. Received type ' + typeof pathObject);
+  return _format("/", pathObject);
+}
+function parse(path) {
+  assertPath(path);
+  var ret = { root: "", dir: "", base: "", ext: "", name: "" };
+  if (path.length === 0)
+    return ret;
+  var code = path.charCodeAt(0), isAbsolute2 = code === 47, start;
+  if (isAbsolute2)
+    ret.root = "/", start = 1;
+  else
+    start = 0;
+  var startDot = -1, startPart = 0, end = -1, matchedSlash = true, i = path.length - 1, preDotState = 0;
+  for (;i >= start; --i) {
+    if (code = path.charCodeAt(i), code === 47) {
+      if (!matchedSlash) {
+        startPart = i + 1;
+        break;
+      }
+      continue;
+    }
+    if (end === -1)
+      matchedSlash = false, end = i + 1;
+    if (code === 46) {
+      if (startDot === -1)
+        startDot = i;
+      else if (preDotState !== 1)
+        preDotState = 1;
+    } else if (startDot !== -1)
+      preDotState = -1;
+  }
+  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
+    if (end !== -1)
+      if (startPart === 0 && isAbsolute2)
+        ret.base = ret.name = path.slice(1, end);
+      else
+        ret.base = ret.name = path.slice(startPart, end);
+  } else {
+    if (startPart === 0 && isAbsolute2)
+      ret.name = path.slice(1, startDot), ret.base = path.slice(1, end);
+    else
+      ret.name = path.slice(startPart, startDot), ret.base = path.slice(startPart, end);
+    ret.ext = path.slice(startDot, end);
+  }
+  if (startPart > 0)
+    ret.dir = path.slice(0, startPart - 1);
+  else if (isAbsolute2)
+    ret.dir = "/";
+  return ret;
+}
+var sep = "/";
+var delimiter = ":";
+var posix = ((p) => (p.posix = p, p))({ resolve, normalize, isAbsolute, join, relative, _makeLong, dirname, basename, extname, format, parse, sep, delimiter, win32: null, posix: null });
+
+// src/quota-fetcher.ts
+var {existsSync, readFileSync, writeFileSync} = __require("fs");
+
+// node:os
+var homedir = function() {
+  return process.env.HOME || process.env.USERPROFILE || "/";
+};
+
+// src/quota-fetcher.ts
+class GoogleQuotaFetcher {
+  quotaAPIURL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+  tokenURL = "https://oauth2.googleapis.com/token";
+  clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
+  clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+  userAgent = "antigravity/1.11.3 Darwin/arm64";
+  async fetch(config, saveConfig) {
+    try {
+      const parts = config.refresh.split("|");
+      if (parts.length !== 2)
+        return null;
+      const refreshToken = parts[0];
+      const projectId = parts[1];
+      let accessToken = config.access;
+      if (Date.now() > config.expires - 60000) {
+        const newTokens = await this.refreshToken(refreshToken);
+        accessToken = newTokens.access_token;
+        saveConfig({
+          access: accessToken,
+          expires: Date.now() + newTokens.expires_in * 1000
+        });
+      }
+      const body = { project: projectId };
+      const response = await fetch(this.quotaAPIURL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": this.userAgent,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        if (response.status === 403)
+          return { models: [], lastUpdated: new Date().toISOString(), isForbidden: true };
+        throw new Error(`Google quota fetch failed: ${response.status}`);
+      }
+      const data = await response.json();
+      const models = [];
+      if (data.models) {
+        for (const [name, info] of Object.entries(data.models)) {
+          if (name.includes("gemini") || name.includes("claude")) {
+            if (info.quotaInfo) {
+              models.push({
+                name,
+                percentage: (info.quotaInfo.remainingFraction ?? 0) * 100,
+                resetTime: info.quotaInfo.resetTime ?? ""
+              });
+            }
+          }
+        }
+      }
+      return {
+        models,
+        lastUpdated: new Date().toISOString(),
+        isForbidden: false
+      };
+    } catch (e) {
+      console.error("Google fetch failed:", e);
+      return null;
+    }
+  }
+  async refreshToken(refreshToken) {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    });
+    const response = await fetch(this.tokenURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+    if (!response.ok)
+      throw new Error("Google token refresh failed");
+    return await response.json();
+  }
+}
+
+class ChatGPTQuotaFetcher {
+  name;
+  usageURL = "https://chatgpt.com/backend-api/wham/usage";
+  tokenURL = "https://auth.openai.com/oauth/token";
+  codexClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
+  userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+  constructor(name) {
+    this.name = name;
+  }
+  async fetch(config, saveConfig) {
+    try {
+      let accessToken = config.access;
+      if (Date.now() > config.expires - 60000) {
+        const newTokens = await this.refreshToken(config.refresh);
+        accessToken = newTokens.access_token;
+        const expiresIn = newTokens.expires_in || 3600;
+        saveConfig({
+          access: accessToken,
+          expires: Date.now() + expiresIn * 1000
+        });
+      }
+      const response = await fetch(this.usageURL, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": this.userAgent,
+          Accept: "application/json",
+          ...config.accountId ? { "ChatGPT-Account-Id": config.accountId } : {}
+        }
+      });
+      if (!response.ok)
+        throw new Error(`${this.name} quota fetch failed: ${response.status}`);
+      const data = await response.json();
+      return this.parseQuota(data);
+    } catch (e) {
+      console.error(`${this.name} fetch failed:`, e);
+      return null;
+    }
+  }
+  async refreshToken(refreshToken) {
+    const body = {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: this.codexClientId
+    };
+    const response = await fetch(this.tokenURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok)
+      throw new Error(`${this.name} token refresh failed`);
+    return await response.json();
+  }
+  parseQuota(data) {
+    const models = [];
+    let limitReached = false;
+    if (data.rate_limit) {
+      limitReached = data.rate_limit.limit_reached ?? false;
+      if (data.rate_limit.primary_window) {
+        const used = data.rate_limit.primary_window.used_percent ?? 0;
+        const reset = data.rate_limit.primary_window.reset_at ? new Date(data.rate_limit.primary_window.reset_at * 1000).toISOString() : "";
+        models.push({
+          name: `${this.name}-session`,
+          percentage: 100 - used,
+          resetTime: reset
+        });
+      }
+      if (data.rate_limit.secondary_window) {
+        const used = data.rate_limit.secondary_window.used_percent ?? 0;
+        const reset = data.rate_limit.secondary_window.reset_at ? new Date(data.rate_limit.secondary_window.reset_at * 1000).toISOString() : "";
+        models.push({
+          name: `${this.name}-weekly`,
+          percentage: 100 - used,
+          resetTime: reset
+        });
+      }
+    }
+    return {
+      models,
+      lastUpdated: new Date().toISOString(),
+      isForbidden: limitReached,
+      planType: data.plan_type
+    };
+  }
+}
+
+class QuotaFetcher {
+  authPath = join(homedir(), ".local/share/opencode/auth.json");
+  async fetchAll() {
+    if (!existsSync(this.authPath)) {
+      console.error("Auth file not found:", this.authPath);
+      return {};
+    }
+    const authContent = readFileSync(this.authPath, "utf-8");
+    const authData = JSON.parse(authContent);
+    let dirty = false;
+    const results = {};
+    if (authData.google) {
+      const googleFetcher = new GoogleQuotaFetcher;
+      const quota = await googleFetcher.fetch(authData.google, (updates) => {
+        if (authData.google)
+          Object.assign(authData.google, updates);
+        dirty = true;
+      });
+      if (quota)
+        results["google"] = quota;
+    }
+    if (authData.openai) {
+      const fetcher = new ChatGPTQuotaFetcher("openai");
+      const quota = await fetcher.fetch(authData.openai, (updates) => {
+        if (authData.openai)
+          Object.assign(authData.openai, updates);
+        dirty = true;
+      });
+      if (quota)
+        results["openai"] = quota;
+    }
+    if (authData.codex) {
+      const fetcher = new ChatGPTQuotaFetcher("codex");
+      const quota = await fetcher.fetch(authData.codex, (updates) => {
+        if (authData.codex)
+          Object.assign(authData.codex, updates);
+        dirty = true;
+      });
+      if (quota)
+        results["codex"] = quota;
+    }
+    if (dirty) {
+      try {
+        writeFileSync(this.authPath, JSON.stringify(authData, null, 2));
+      } catch (e) {
+        console.error("Failed to save updated tokens:", e);
+      }
+    }
+    return results;
+  }
+}
+if (false) {}
+
+// ralph.ts
+var VERSION = "1.0.9";
+var stateDir = join2(process.cwd(), ".opencode");
+var statePath = join2(stateDir, "ralph-loop.state.json");
+var contextPath = join2(stateDir, "ralph-context.md");
+var historyPath = join2(stateDir, "ralph-history.json");
+var args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  console.log(`
+Ralph Wiggum Loop - Iterative AI development with OpenCode
+
+Usage:
+  ralph "<prompt>" [options]
+  ralph --prompt-file <path> [options]
+
+Arguments:
+  prompt              Task description for the AI to work on
+
+Options:
+  --min-iterations N  Minimum iterations before completion allowed (default: 1)
+  --max-iterations N  Maximum iterations before stopping (default: unlimited)
+  --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
+  --model MODEL       Model to use (e.g., anthropic/claude-sonnet), or comma-separated list
+  --prompt-file, --file, -f  Read prompt content from a file
+  --no-stream         Buffer OpenCode output and print at the end
+  --verbose-tools     Print every tool line (disable compact tool summary)
+  --no-plugins        Disable non-auth OpenCode plugins for this run
+  --no-commit         Don't auto-commit after each iteration
+  --docker-image IMG  Run opencode in a docker container using image IMG
+  --docker-args ARGS  Additional arguments for docker run (e.g. "-v /mnt:/mnt")
+  --devcontainer-service SVC  Run opencode in devcontainer service SVC
+  --allow-all         Auto-approve all tool permissions (for non-interactive use)
+  --load-config PATH  Load run configuration from a JSON file
+  --version, -v       Show version
+  --help, -h          Show this help
+
+Commands:
+  --status            Show current Ralph loop status and history
+  --add-context TEXT  Add context for the next iteration (or edit .opencode/ralph-context.md)
+  --clear-context     Clear any pending context
+
+Examples:
+  ralph "Build a REST API for todos"
+  ralph "Fix the auth bug" --max-iterations 10
+  ralph "Add tests" --completion-promise "ALL TESTS PASS" --model openai/gpt-5.1
+  ralph --prompt-file ./prompt.md --max-iterations 5
+  ralph --status                                        # Check loop status
+  ralph --add-context "Focus on the auth module first"  # Add hint for next iteration
+
+How it works:
+  1. Sends your prompt to OpenCode
+  2. AI works on the task
+  3. Checks output for completion promise
+  4. If not complete, repeats with same prompt
+  5. AI sees its previous work in files
+  6. Continues until promise detected or max iterations
+
+To stop manually: Ctrl+C
+
+Learn more: https://ghuntley.com/ralph/
+`);
+  process.exit(0);
+}
+if (args.includes("--version") || args.includes("-v")) {
+  console.log(`ralph ${VERSION}`);
+  process.exit(0);
+}
+function loadHistory() {
+  if (!existsSync2(historyPath)) {
+    return {
+      iterations: [],
+      totalDurationMs: 0,
+      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+    };
+  }
+  try {
+    return JSON.parse(readFileSync2(historyPath, "utf-8"));
+  } catch {
+    return {
+      iterations: [],
+      totalDurationMs: 0,
+      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+    };
+  }
+}
+function saveHistory(history) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync2(historyPath, JSON.stringify(history, null, 2));
+}
+function clearHistory() {
+  if (existsSync2(historyPath)) {
+    try {
+      __require("fs").unlinkSync(historyPath);
+    } catch {}
+  }
+}
+if (args.includes("--status")) {
+  const state = loadState();
+  const history = loadHistory();
+  const context = existsSync2(contextPath) ? readFileSync2(contextPath, "utf-8").trim() : null;
+  console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551                    Ralph Wiggum Status                           \u2551
+\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+`);
+  if (state?.active) {
+    const elapsed = Date.now() - new Date(state.startedAt).getTime();
+    const elapsedStr = formatDurationLong(elapsed);
+    console.log(`\uD83D\uDD04 ACTIVE LOOP`);
+    console.log(`   Iteration:    ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}`);
+    console.log(`   Started:      ${state.startedAt}`);
+    console.log(`   Elapsed:      ${elapsedStr}`);
+    console.log(`   Promise:      ${state.completionPromise}`);
+    if (state.model) {
+      console.log(`   Model:        ${state.model} ${state.modelQueue && state.modelQueue.length > 1 ? `(Model ${state.currentModelIndex + 1}/${state.modelQueue.length} in queue)` : ""}`);
+    }
+    console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
+  } else {
+    console.log(`\u23F9\uFE0F  No active loop`);
+  }
+  if (context) {
+    console.log(`
+\uD83D\uDCDD PENDING CONTEXT (will be injected next iteration):`);
+    console.log(`   ${context.split(`
+`).join(`
+   `)}`);
+  }
+  if (history.iterations.length > 0) {
+    console.log(`
+\uD83D\uDCCA HISTORY (${history.iterations.length} iterations)`);
+    console.log(`   Total time:   ${formatDurationLong(history.totalDurationMs)}`);
+    const recent = history.iterations.slice(-5);
+    console.log(`
+   Recent iterations:`);
+    for (const iter of recent) {
+      const tools = Object.entries(iter.toolsUsed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}:${v}`).join(" ");
+      const status = iter.completionDetected ? "\u2705" : iter.exitCode !== 0 ? "\u274C" : "\uD83D\uDD04";
+      console.log(`   ${status} #${iter.iteration}: ${formatDurationLong(iter.durationMs)} | ${tools || "no tools"}`);
+    }
+    const struggle = history.struggleIndicators;
+    const hasRepeatedErrors = Object.values(struggle.repeatedErrors).some((count) => count >= 2);
+    if (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3 || hasRepeatedErrors) {
+      console.log(`
+\u26A0\uFE0F  STRUGGLE INDICATORS:`);
+      if (struggle.noProgressIterations >= 3) {
+        console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+      }
+      if (struggle.shortIterations >= 3) {
+        console.log(`   - ${struggle.shortIterations} very short iterations (< 30s)`);
+      }
+      const topErrors = Object.entries(struggle.repeatedErrors).filter(([_, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      for (const [error, count] of topErrors) {
+        console.log(`   - Same error ${count}x: "${error.substring(0, 50)}..."`);
+      }
+      console.log(`
+   \uD83D\uDCA1 Consider using: ralph --add-context "your hint here"`);
+    }
+  }
+  console.log("");
+  process.exit(0);
+}
+var addContextIdx = args.indexOf("--add-context");
+if (addContextIdx !== -1) {
+  const contextText = args[addContextIdx + 1];
+  if (!contextText) {
+    console.error("Error: --add-context requires a text argument");
+    console.error('Usage: ralph --add-context "Your context or hint here"');
+    process.exit(1);
+  }
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  const timestamp = new Date().toISOString();
+  const newEntry = `
+## Context added at ${timestamp}
+${contextText}
+`;
+  if (existsSync2(contextPath)) {
+    const existing = readFileSync2(contextPath, "utf-8");
+    writeFileSync2(contextPath, existing + newEntry);
+  } else {
+    writeFileSync2(contextPath, `# Ralph Loop Context
+${newEntry}`);
+  }
+  console.log(`\u2705 Context added for next iteration`);
+  console.log(`   File: ${contextPath}`);
+  const state = loadState();
+  if (state?.active) {
+    console.log(`   Will be picked up in iteration ${state.iteration + 1}`);
+  } else {
+    console.log(`   Will be used when loop starts`);
+  }
+  process.exit(0);
+}
+if (args.includes("--clear-context")) {
+  if (existsSync2(contextPath)) {
+    __require("fs").unlinkSync(contextPath);
+    console.log(`\u2705 Context cleared`);
+  } else {
+    console.log(`\u2139\uFE0F  No pending context to clear`);
+  }
+  process.exit(0);
+}
+function formatDurationLong(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+var prompt = "";
+var minIterations = 1;
+var maxIterations = 0;
+var completionPromise = "COMPLETE";
+var model = "";
+var autoCommit = true;
+var disablePlugins = false;
+var allowAllPermissions = false;
+var promptFile = "";
+var streamOutput = true;
+var verboseTools = false;
+var promptSource = "";
+var dockerImage = "";
+var dockerArgs = [];
+var devcontainerService = "";
+var currentProc = null;
+var containerName = "";
+var loadConfigPath = "";
+var promptParts = [];
+for (let i = 0;i < args.length; i++) {
+  const arg = args[i];
+  if (arg === "--min-iterations") {
+    const val = args[++i];
+    if (!val || isNaN(parseInt(val))) {
+      console.error("Error: --min-iterations requires a number");
+      process.exit(1);
+    }
+    minIterations = parseInt(val);
+  } else if (arg === "--max-iterations") {
+    const val = args[++i];
+    if (!val || isNaN(parseInt(val))) {
+      console.error("Error: --max-iterations requires a number");
+      process.exit(1);
+    }
+    maxIterations = parseInt(val);
+  } else if (arg === "--completion-promise") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --completion-promise requires a value");
+      process.exit(1);
+    }
+    completionPromise = val;
+  } else if (arg === "--model") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --model requires a value");
+      process.exit(1);
+    }
+    model = val;
+  } else if (arg === "--prompt-file" || arg === "--file" || arg === "-f") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --prompt-file requires a file path");
+      process.exit(1);
+    }
+    promptFile = val;
+  } else if (arg === "--no-stream") {
+    streamOutput = false;
+  } else if (arg === "--stream") {
+    streamOutput = true;
+  } else if (arg === "--verbose-tools") {
+    verboseTools = true;
+  } else if (arg === "--no-commit") {
+    autoCommit = false;
+  } else if (arg === "--no-plugins") {
+    disablePlugins = true;
+  } else if (arg === "--allow-all") {
+    allowAllPermissions = true;
+  } else if (arg === "--load-config") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --load-config requires a file path");
+      process.exit(1);
+    }
+    loadConfigPath = val;
+  } else if (arg === "--docker-image") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --docker-image requires an image name");
+      process.exit(1);
+    }
+    dockerImage = val;
+  } else if (arg === "--docker-args") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --docker-args requires a value");
+      process.exit(1);
+    }
+    const matches = val.match(/(?:[^\s"]+|"[^"]*")+/g);
+    if (matches) {
+      dockerArgs.push(...matches.map((s) => s.replace(/^"|"$/g, "")));
+    }
+  } else if (arg === "--devcontainer-service") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --devcontainer-service requires a service name");
+      process.exit(1);
+    }
+    devcontainerService = val;
+  } else if (arg.startsWith("-")) {
+    console.error(`Error: Unknown option: ${arg}`);
+    console.error("Run 'ralph --help' for available options");
+    process.exit(1);
+  } else {
+    promptParts.push(arg);
+  }
+}
+function readPromptFile(path) {
+  if (!existsSync2(path)) {
+    console.error(`Error: Prompt file not found: ${path}`);
+    process.exit(1);
+  }
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile()) {
+      console.error(`Error: Prompt path is not a file: ${path}`);
+      process.exit(1);
+    }
+  } catch {
+    console.error(`Error: Unable to stat prompt file: ${path}`);
+    process.exit(1);
+  }
+  try {
+    const content = readFileSync2(path, "utf-8");
+    if (!content.trim()) {
+      console.error(`Error: Prompt file is empty: ${path}`);
+      process.exit(1);
+    }
+    return content;
+  } catch {
+    console.error(`Error: Unable to read prompt file: ${path}`);
+    process.exit(1);
+  }
+}
+if (loadConfigPath) {
+  if (!existsSync2(loadConfigPath)) {
+    console.error(`Error: Config file not found: ${loadConfigPath}`);
+    process.exit(1);
+  }
+  try {
+    const config = JSON.parse(readFileSync2(loadConfigPath, "utf-8"));
+    if (config.run) {
+      const r = config.run;
+      if (r.prompt)
+        prompt = r.prompt;
+      if (r.modelQueue)
+        model = r.modelQueue.join(",");
+      if (r.minIterations !== undefined)
+        minIterations = r.minIterations;
+      if (r.maxIterations !== undefined)
+        maxIterations = r.maxIterations;
+      if (r.completionPromise)
+        completionPromise = r.completionPromise;
+      if (r.mode === "docker" && r.docker) {
+        dockerImage = r.docker.image || dockerImage;
+        if (r.docker.args) {
+          const matches = r.docker.args.match(/(?:[^\s"]+|"[^"]*")+/g);
+          if (matches) {
+            dockerArgs.push(...matches.map((s) => s.replace(/^"|"$/g, "")));
+          }
+        }
+      } else if (r.mode === "devcontainer" && r.devcontainer) {
+        devcontainerService = r.devcontainer.service || devcontainerService;
+      }
+      if (r.flags) {
+        if (r.flags.noCommit !== undefined)
+          autoCommit = !r.flags.noCommit;
+        if (r.flags.verboseTools !== undefined)
+          verboseTools = r.flags.verboseTools;
+        if (r.flags.noPlugins !== undefined)
+          disablePlugins = r.flags.noPlugins;
+        if (r.flags.allowAll !== undefined)
+          allowAllPermissions = r.flags.allowAll;
+        if (r.flags.noStream !== undefined)
+          streamOutput = !r.flags.noStream;
+      }
+    }
+  } catch (e) {
+    console.error(`Error: Failed to parse config file: ${loadConfigPath}`);
+    process.exit(1);
+  }
+}
+if (promptFile) {
+  promptSource = promptFile;
+  prompt = readPromptFile(promptFile);
+} else if (promptParts.length === 1 && existsSync2(promptParts[0])) {
+  promptSource = promptParts[0];
+  prompt = readPromptFile(promptParts[0]);
+} else {
+  prompt = promptParts.join(" ");
+}
+if (!prompt) {
+  console.error("Error: No prompt provided");
+  console.error('Usage: ralph "Your task description" [options]');
+  console.error("Run 'ralph --help' for more information");
+  process.exit(1);
+}
+if (maxIterations > 0 && minIterations > maxIterations) {
+  console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
+  process.exit(1);
+}
+function saveState(state) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync2(statePath, JSON.stringify(state, null, 2));
+}
+function loadState() {
+  if (!existsSync2(statePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync2(statePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function clearState() {
+  if (existsSync2(statePath)) {
+    try {
+      __require("fs").unlinkSync(statePath);
+    } catch {}
+  }
+}
+function loadPluginsFromConfig(configPath) {
+  if (!existsSync2(configPath)) {
+    return [];
+  }
+  try {
+    const raw = readFileSync2(configPath, "utf-8");
+    const withoutBlock = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+    const withoutLine = withoutBlock.replace(/^\s*\/\/.*$/gm, "");
+    const parsed = JSON.parse(withoutLine);
+    const plugins = parsed?.plugin;
+    return Array.isArray(plugins) ? plugins.filter((p) => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function ensureRalphConfig(options) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  const configPath = join2(stateDir, "ralph-opencode.config.json");
+  const userConfigPath = join2(process.env.XDG_CONFIG_HOME ?? join2(process.env.HOME ?? "", ".config"), "opencode", "opencode.json");
+  const projectConfigPath = join2(process.cwd(), ".opencode", "opencode.json");
+  const config = {
+    $schema: "https://opencode.ai/config.json"
+  };
+  if (options.filterPlugins) {
+    const plugins = [
+      ...loadPluginsFromConfig(userConfigPath),
+      ...loadPluginsFromConfig(projectConfigPath)
+    ];
+    config.plugin = Array.from(new Set(plugins)).filter((p) => /auth/i.test(p));
+  }
+  if (options.allowAllPermissions) {
+    config.permission = {
+      read: "allow",
+      edit: "allow",
+      glob: "allow",
+      grep: "allow",
+      list: "allow",
+      bash: "allow",
+      task: "allow",
+      webfetch: "allow",
+      websearch: "allow",
+      codesearch: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+      question: "allow",
+      lsp: "allow",
+      external_directory: "allow"
+    };
+  }
+  writeFileSync2(configPath, JSON.stringify(config, null, 2));
+  return configPath;
+  return configPath;
+}
+async function checkAndSortModels(models) {
+  console.log("Checking model quotas...");
+  const fetcher = new QuotaFetcher;
+  const quotas = await fetcher.fetchAll();
+  const validModels = [];
+  const lowQuotaModels = [];
+  for (const model2 of models) {
+    const [provider, modelName] = model2.split("/");
+    const p = provider.toLowerCase();
+    let hasQuota = true;
+    let percentage = 100;
+    if (quotas[p]) {
+      const q = quotas[p];
+      if (q.isForbidden) {
+        hasQuota = false;
+        percentage = 0;
+      } else {
+        if (p === "openai" || p === "codex") {
+          const session = q.models.find((m) => m.name.includes("session"));
+          if (session) {
+            percentage = session.percentage;
+          }
+        } else if (p === "google") {
+          if (modelName) {
+            const match = q.models.find((m) => m.name.includes(modelName) || modelName.includes(m.name));
+            if (match) {
+              percentage = match.percentage;
+            }
+          }
+        }
+        if (percentage < 10)
+          hasQuota = false;
+      }
+    }
+    if (hasQuota) {
+      validModels.push(model2);
+    } else {
+      console.warn(`\u26A0\uFE0F  Skipping model ${model2} due to low/exhausted quota (${percentage.toFixed(1)}%)`);
+      lowQuotaModels.push(model2);
+    }
+  }
+  if (validModels.length === 0) {
+    console.warn("\u26A0\uFE0F  All requested models have low quota! Falling back to original list.");
+    return models;
+  }
+  return validModels;
+}
+function loadProviderConfig(stateDir2) {
+  const defaults = {
+    anthropic: { pattern: "overloaded_error|rate_limit_error|429" },
+    openai: { pattern: "rate_limit_exceeded|insufficient_quota|429" },
+    google: { pattern: "All Antigravity endpoints failed" },
+    mistral: { pattern: "rate_limit_exceeded|429" }
+  };
+  const userConfigPath = join2(stateDir2, "ralph-providers.json");
+  if (existsSync2(userConfigPath)) {
+    try {
+      const userConfig = JSON.parse(readFileSync2(userConfigPath, "utf-8"));
+      return { ...defaults, ...userConfig };
+    } catch (e) {
+      console.warn("\u26A0\uFE0F  Failed to parse ralph-providers.json, using defaults");
+    }
+  }
+  return defaults;
+}
+function loadContext() {
+  if (!existsSync2(contextPath)) {
+    return null;
+  }
+  try {
+    const content = readFileSync2(contextPath, "utf-8").trim();
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+function clearContext() {
+  if (existsSync2(contextPath)) {
+    try {
+      __require("fs").unlinkSync(contextPath);
+    } catch {}
+  }
+}
+function buildPrompt(state) {
+  const context = loadContext();
+  const contextSection = context ? `
+## Additional Context (added by user mid-loop)
+
+${context}
+
+---
+` : "";
+  return `
+# Ralph Wiggum Loop - Iteration ${state.iteration}
+
+You are in an iterative development loop. Work on the task below until you can genuinely complete it.
+${contextSection}
+## Your Task
+
+${state.prompt}
+
+## Instructions
+
+1. Read the current state of files to understand what's been done
+2. **Update your todo list** - Use the TodoWrite tool to track progress and plan remaining work
+3. Make progress on the task
+4. Run tests/verification if applicable
+5. When the task is GENUINELY COMPLETE, output:
+   <promise>${state.completionPromise}</promise>
+
+## Critical Rules
+
+- ONLY output <promise>${state.completionPromise}</promise> when the task is truly done
+- Do NOT lie or output false promises to exit the loop
+- If stuck, try a different approach
+- Check your work before claiming completion
+- The loop will continue until you succeed
+- **IMPORTANT**: Update your todo list at the start of each iteration to show progress
+
+## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
+
+Now, work on the task. Good luck!
+`.trim();
+}
+function checkCompletion(output, promise) {
+  const promisePattern = new RegExp(`<promise>\\s*${escapeRegex(promise)}\\s*</promise>`, "i");
+  return promisePattern.test(output);
+}
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function detectPlaceholderPluginError(output) {
+  return output.includes("ralph-wiggum is not yet ready for use. This is a placeholder package.");
+}
+function stripAnsi(input) {
+  return input.replace(/\x1B\[[0-9;]*m/g, "");
+}
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+function formatToolSummary(toolCounts, maxItems = 6) {
+  if (!toolCounts.size)
+    return "";
+  const entries = Array.from(toolCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const shown = entries.slice(0, maxItems);
+  const remaining = entries.length - shown.length;
+  const parts = shown.map(([name, count]) => `${name} ${count}`);
+  if (remaining > 0) {
+    parts.push(`+${remaining} more`);
+  }
+  return parts.join(" \u2022 ");
+}
+function collectToolSummaryFromText(text) {
+  const counts = new Map;
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const match = stripAnsi(line).match(/^\|\s{2}([A-Za-z0-9_-]+)/);
+    if (match) {
+      const tool = match[1];
+      counts.set(tool, (counts.get(tool) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+function printIterationSummary(params) {
+  const toolSummary = formatToolSummary(params.toolCounts);
+  console.log(`
+Iteration Summary`);
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  console.log(`Iteration: ${params.iteration}`);
+  console.log(`Elapsed:   ${formatDuration(params.elapsedMs)}`);
+  if (toolSummary) {
+    console.log(`Tools:     ${toolSummary}`);
+  } else {
+    console.log("Tools:     none");
+  }
+  console.log(`Exit code: ${params.exitCode}`);
+  console.log(`Completion promise: ${params.completionDetected ? "detected" : "not detected"}`);
+}
+async function streamProcessOutput(proc, options) {
+  const toolCounts = new Map;
+  let stdoutText = "";
+  let stderrText = "";
+  let lastPrintedAt = Date.now();
+  let lastActivityAt = Date.now();
+  let lastToolSummaryAt = 0;
+  const compactTools = options.compactTools;
+  const maybePrintToolSummary = (force = false) => {
+    if (!compactTools || toolCounts.size === 0)
+      return;
+    const now = Date.now();
+    if (!force && now - lastToolSummaryAt < options.toolSummaryIntervalMs) {
+      return;
+    }
+    const summary = formatToolSummary(toolCounts);
+    if (summary) {
+      console.log(`| Tools    ${summary}`);
+      lastPrintedAt = Date.now();
+      lastToolSummaryAt = Date.now();
+    }
+  };
+  const handleLine = (line, isError) => {
+    lastActivityAt = Date.now();
+    const match = stripAnsi(line).match(/^\|\s{2}([A-Za-z0-9_-]+)/);
+    if (compactTools && match) {
+      const tool = match[1];
+      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + 1);
+      maybePrintToolSummary();
+      return;
+    }
+    if (line.length === 0) {
+      console.log("");
+      lastPrintedAt = Date.now();
+      return;
+    }
+    if (isError) {
+      console.error(line);
+    } else {
+      console.log(line);
+    }
+    lastPrintedAt = Date.now();
+  };
+  const streamText = async (stream, onText, isError) => {
+    if (!stream)
+      return;
+    const reader = stream.getReader();
+    const decoder = new TextDecoder;
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done)
+        break;
+      const text = decoder.decode(value, { stream: true });
+      if (text.length > 0) {
+        onText(text);
+        buffer += text;
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          handleLine(line, isError);
+        }
+      }
+    }
+    const flushed = decoder.decode();
+    if (flushed.length > 0) {
+      onText(flushed);
+      buffer += flushed;
+    }
+    if (buffer.length > 0) {
+      handleLine(buffer, isError);
+    }
+  };
+  const heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    if (now - lastPrintedAt >= options.heartbeatIntervalMs) {
+      const elapsed = formatDuration(now - options.iterationStart);
+      const sinceActivity = formatDuration(now - lastActivityAt);
+      console.log(`\u23F3 working... elapsed ${elapsed} \xB7 last activity ${sinceActivity} ago`);
+      lastPrintedAt = now;
+    }
+  }, options.heartbeatIntervalMs);
+  try {
+    await Promise.all([
+      streamText(proc.stdout, (chunk) => {
+        stdoutText += chunk;
+      }, false),
+      streamText(proc.stderr, (chunk) => {
+        stderrText += chunk;
+      }, true)
+    ]);
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+  if (compactTools) {
+    maybePrintToolSummary(true);
+  }
+  return { stdoutText, stderrText, toolCounts };
+}
+async function captureFileSnapshot() {
+  const files = new Map;
+  try {
+    const status = await $`git status --porcelain`.text();
+    const trackedFiles = await $`git ls-files`.text();
+    const allFiles = new Set;
+    for (const line of status.split(`
+`)) {
+      if (line.trim()) {
+        allFiles.add(line.substring(3).trim());
+      }
+    }
+    for (const file of trackedFiles.split(`
+`)) {
+      if (file.trim()) {
+        allFiles.add(file.trim());
+      }
+    }
+    for (const file of allFiles) {
+      try {
+        const hash = await #!/usr/bin/env bun
+// @bun
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined")
+    return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
+// ralph.ts
+var {$ } = globalThis.Bun;
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync, statSync } from "fs";
+import { join as join2 } from "path";
+
+// node:path
+function assertPath(path) {
+  if (typeof path !== "string")
+    throw TypeError("Path must be a string. Received " + JSON.stringify(path));
+}
+function normalizeStringPosix(path, allowAboveRoot) {
+  var res = "", lastSegmentLength = 0, lastSlash = -1, dots = 0, code;
+  for (var i = 0;i <= path.length; ++i) {
+    if (i < path.length)
+      code = path.charCodeAt(i);
+    else if (code === 47)
+      break;
+    else
+      code = 47;
+    if (code === 47) {
+      if (lastSlash === i - 1 || dots === 1)
+        ;
+      else if (lastSlash !== i - 1 && dots === 2) {
+        if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 || res.charCodeAt(res.length - 2) !== 46) {
+          if (res.length > 2) {
+            var lastSlashIndex = res.lastIndexOf("/");
+            if (lastSlashIndex !== res.length - 1) {
+              if (lastSlashIndex === -1)
+                res = "", lastSegmentLength = 0;
+              else
+                res = res.slice(0, lastSlashIndex), lastSegmentLength = res.length - 1 - res.lastIndexOf("/");
+              lastSlash = i, dots = 0;
+              continue;
+            }
+          } else if (res.length === 2 || res.length === 1) {
+            res = "", lastSegmentLength = 0, lastSlash = i, dots = 0;
+            continue;
+          }
+        }
+        if (allowAboveRoot) {
+          if (res.length > 0)
+            res += "/..";
+          else
+            res = "..";
+          lastSegmentLength = 2;
+        }
+      } else {
+        if (res.length > 0)
+          res += "/" + path.slice(lastSlash + 1, i);
+        else
+          res = path.slice(lastSlash + 1, i);
+        lastSegmentLength = i - lastSlash - 1;
+      }
+      lastSlash = i, dots = 0;
+    } else if (code === 46 && dots !== -1)
+      ++dots;
+    else
+      dots = -1;
+  }
+  return res;
+}
+function _format(sep, pathObject) {
+  var dir = pathObject.dir || pathObject.root, base = pathObject.base || (pathObject.name || "") + (pathObject.ext || "");
+  if (!dir)
+    return base;
+  if (dir === pathObject.root)
+    return dir + base;
+  return dir + sep + base;
+}
+function resolve() {
+  var resolvedPath = "", resolvedAbsolute = false, cwd;
+  for (var i = arguments.length - 1;i >= -1 && !resolvedAbsolute; i--) {
+    var path;
+    if (i >= 0)
+      path = arguments[i];
+    else {
+      if (cwd === undefined)
+        cwd = process.cwd();
+      path = cwd;
+    }
+    if (assertPath(path), path.length === 0)
+      continue;
+    resolvedPath = path + "/" + resolvedPath, resolvedAbsolute = path.charCodeAt(0) === 47;
+  }
+  if (resolvedPath = normalizeStringPosix(resolvedPath, !resolvedAbsolute), resolvedAbsolute)
+    if (resolvedPath.length > 0)
+      return "/" + resolvedPath;
+    else
+      return "/";
+  else if (resolvedPath.length > 0)
+    return resolvedPath;
+  else
+    return ".";
+}
+function normalize(path) {
+  if (assertPath(path), path.length === 0)
+    return ".";
+  var isAbsolute = path.charCodeAt(0) === 47, trailingSeparator = path.charCodeAt(path.length - 1) === 47;
+  if (path = normalizeStringPosix(path, !isAbsolute), path.length === 0 && !isAbsolute)
+    path = ".";
+  if (path.length > 0 && trailingSeparator)
+    path += "/";
+  if (isAbsolute)
+    return "/" + path;
+  return path;
+}
+function isAbsolute(path) {
+  return assertPath(path), path.length > 0 && path.charCodeAt(0) === 47;
+}
+function join() {
+  if (arguments.length === 0)
+    return ".";
+  var joined;
+  for (var i = 0;i < arguments.length; ++i) {
+    var arg = arguments[i];
+    if (assertPath(arg), arg.length > 0)
+      if (joined === undefined)
+        joined = arg;
+      else
+        joined += "/" + arg;
+  }
+  if (joined === undefined)
+    return ".";
+  return normalize(joined);
+}
+function relative(from, to) {
+  if (assertPath(from), assertPath(to), from === to)
+    return "";
+  if (from = resolve(from), to = resolve(to), from === to)
+    return "";
+  var fromStart = 1;
+  for (;fromStart < from.length; ++fromStart)
+    if (from.charCodeAt(fromStart) !== 47)
+      break;
+  var fromEnd = from.length, fromLen = fromEnd - fromStart, toStart = 1;
+  for (;toStart < to.length; ++toStart)
+    if (to.charCodeAt(toStart) !== 47)
+      break;
+  var toEnd = to.length, toLen = toEnd - toStart, length = fromLen < toLen ? fromLen : toLen, lastCommonSep = -1, i = 0;
+  for (;i <= length; ++i) {
+    if (i === length) {
+      if (toLen > length) {
+        if (to.charCodeAt(toStart + i) === 47)
+          return to.slice(toStart + i + 1);
+        else if (i === 0)
+          return to.slice(toStart + i);
+      } else if (fromLen > length) {
+        if (from.charCodeAt(fromStart + i) === 47)
+          lastCommonSep = i;
+        else if (i === 0)
+          lastCommonSep = 0;
+      }
+      break;
+    }
+    var fromCode = from.charCodeAt(fromStart + i), toCode = to.charCodeAt(toStart + i);
+    if (fromCode !== toCode)
+      break;
+    else if (fromCode === 47)
+      lastCommonSep = i;
+  }
+  var out = "";
+  for (i = fromStart + lastCommonSep + 1;i <= fromEnd; ++i)
+    if (i === fromEnd || from.charCodeAt(i) === 47)
+      if (out.length === 0)
+        out += "..";
+      else
+        out += "/..";
+  if (out.length > 0)
+    return out + to.slice(toStart + lastCommonSep);
+  else {
+    if (toStart += lastCommonSep, to.charCodeAt(toStart) === 47)
+      ++toStart;
+    return to.slice(toStart);
+  }
+}
+function _makeLong(path) {
+  return path;
+}
+function dirname(path) {
+  if (assertPath(path), path.length === 0)
+    return ".";
+  var code = path.charCodeAt(0), hasRoot = code === 47, end = -1, matchedSlash = true;
+  for (var i = path.length - 1;i >= 1; --i)
+    if (code = path.charCodeAt(i), code === 47) {
+      if (!matchedSlash) {
+        end = i;
+        break;
+      }
+    } else
+      matchedSlash = false;
+  if (end === -1)
+    return hasRoot ? "/" : ".";
+  if (hasRoot && end === 1)
+    return "//";
+  return path.slice(0, end);
+}
+function basename(path, ext) {
+  if (ext !== undefined && typeof ext !== "string")
+    throw TypeError('"ext" argument must be a string');
+  assertPath(path);
+  var start = 0, end = -1, matchedSlash = true, i;
+  if (ext !== undefined && ext.length > 0 && ext.length <= path.length) {
+    if (ext.length === path.length && ext === path)
+      return "";
+    var extIdx = ext.length - 1, firstNonSlashEnd = -1;
+    for (i = path.length - 1;i >= 0; --i) {
+      var code = path.charCodeAt(i);
+      if (code === 47) {
+        if (!matchedSlash) {
+          start = i + 1;
+          break;
+        }
+      } else {
+        if (firstNonSlashEnd === -1)
+          matchedSlash = false, firstNonSlashEnd = i + 1;
+        if (extIdx >= 0)
+          if (code === ext.charCodeAt(extIdx)) {
+            if (--extIdx === -1)
+              end = i;
+          } else
+            extIdx = -1, end = firstNonSlashEnd;
+      }
+    }
+    if (start === end)
+      end = firstNonSlashEnd;
+    else if (end === -1)
+      end = path.length;
+    return path.slice(start, end);
+  } else {
+    for (i = path.length - 1;i >= 0; --i)
+      if (path.charCodeAt(i) === 47) {
+        if (!matchedSlash) {
+          start = i + 1;
+          break;
+        }
+      } else if (end === -1)
+        matchedSlash = false, end = i + 1;
+    if (end === -1)
+      return "";
+    return path.slice(start, end);
+  }
+}
+function extname(path) {
+  assertPath(path);
+  var startDot = -1, startPart = 0, end = -1, matchedSlash = true, preDotState = 0;
+  for (var i = path.length - 1;i >= 0; --i) {
+    var code = path.charCodeAt(i);
+    if (code === 47) {
+      if (!matchedSlash) {
+        startPart = i + 1;
+        break;
+      }
+      continue;
+    }
+    if (end === -1)
+      matchedSlash = false, end = i + 1;
+    if (code === 46) {
+      if (startDot === -1)
+        startDot = i;
+      else if (preDotState !== 1)
+        preDotState = 1;
+    } else if (startDot !== -1)
+      preDotState = -1;
+  }
+  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)
+    return "";
+  return path.slice(startDot, end);
+}
+function format(pathObject) {
+  if (pathObject === null || typeof pathObject !== "object")
+    throw TypeError('The "pathObject" argument must be of type Object. Received type ' + typeof pathObject);
+  return _format("/", pathObject);
+}
+function parse(path) {
+  assertPath(path);
+  var ret = { root: "", dir: "", base: "", ext: "", name: "" };
+  if (path.length === 0)
+    return ret;
+  var code = path.charCodeAt(0), isAbsolute2 = code === 47, start;
+  if (isAbsolute2)
+    ret.root = "/", start = 1;
+  else
+    start = 0;
+  var startDot = -1, startPart = 0, end = -1, matchedSlash = true, i = path.length - 1, preDotState = 0;
+  for (;i >= start; --i) {
+    if (code = path.charCodeAt(i), code === 47) {
+      if (!matchedSlash) {
+        startPart = i + 1;
+        break;
+      }
+      continue;
+    }
+    if (end === -1)
+      matchedSlash = false, end = i + 1;
+    if (code === 46) {
+      if (startDot === -1)
+        startDot = i;
+      else if (preDotState !== 1)
+        preDotState = 1;
+    } else if (startDot !== -1)
+      preDotState = -1;
+  }
+  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
+    if (end !== -1)
+      if (startPart === 0 && isAbsolute2)
+        ret.base = ret.name = path.slice(1, end);
+      else
+        ret.base = ret.name = path.slice(startPart, end);
+  } else {
+    if (startPart === 0 && isAbsolute2)
+      ret.name = path.slice(1, startDot), ret.base = path.slice(1, end);
+    else
+      ret.name = path.slice(startPart, startDot), ret.base = path.slice(startPart, end);
+    ret.ext = path.slice(startDot, end);
+  }
+  if (startPart > 0)
+    ret.dir = path.slice(0, startPart - 1);
+  else if (isAbsolute2)
+    ret.dir = "/";
+  return ret;
+}
+var sep = "/";
+var delimiter = ":";
+var posix = ((p) => (p.posix = p, p))({ resolve, normalize, isAbsolute, join, relative, _makeLong, dirname, basename, extname, format, parse, sep, delimiter, win32: null, posix: null });
+
+// src/quota-fetcher.ts
+var {existsSync, readFileSync, writeFileSync} = __require("fs");
+
+// node:os
+var homedir = function() {
+  return process.env.HOME || process.env.USERPROFILE || "/";
+};
+
+// src/quota-fetcher.ts
+class GoogleQuotaFetcher {
+  quotaAPIURL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+  tokenURL = "https://oauth2.googleapis.com/token";
+  clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || "";
+  clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+  userAgent = "antigravity/1.11.3 Darwin/arm64";
+  async fetch(config, saveConfig) {
+    try {
+      const parts = config.refresh.split("|");
+      if (parts.length !== 2)
+        return null;
+      const refreshToken = parts[0];
+      const projectId = parts[1];
+      let accessToken = config.access;
+      if (Date.now() > config.expires - 60000) {
+        const newTokens = await this.refreshToken(refreshToken);
+        accessToken = newTokens.access_token;
+        saveConfig({
+          access: accessToken,
+          expires: Date.now() + newTokens.expires_in * 1000
+        });
+      }
+      const body = { project: projectId };
+      const response = await fetch(this.quotaAPIURL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": this.userAgent,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        if (response.status === 403)
+          return { models: [], lastUpdated: new Date().toISOString(), isForbidden: true };
+        throw new Error(`Google quota fetch failed: ${response.status}`);
+      }
+      const data = await response.json();
+      const models = [];
+      if (data.models) {
+        for (const [name, info] of Object.entries(data.models)) {
+          if (name.includes("gemini") || name.includes("claude")) {
+            if (info.quotaInfo) {
+              models.push({
+                name,
+                percentage: (info.quotaInfo.remainingFraction ?? 0) * 100,
+                resetTime: info.quotaInfo.resetTime ?? ""
+              });
+            }
+          }
+        }
+      }
+      return {
+        models,
+        lastUpdated: new Date().toISOString(),
+        isForbidden: false
+      };
+    } catch (e) {
+      console.error("Google fetch failed:", e);
+      return null;
+    }
+  }
+  async refreshToken(refreshToken) {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    });
+    const response = await fetch(this.tokenURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+    if (!response.ok)
+      throw new Error("Google token refresh failed");
+    return await response.json();
+  }
+}
+
+class ChatGPTQuotaFetcher {
+  name;
+  usageURL = "https://chatgpt.com/backend-api/wham/usage";
+  tokenURL = "https://auth.openai.com/oauth/token";
+  codexClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
+  userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+  constructor(name) {
+    this.name = name;
+  }
+  async fetch(config, saveConfig) {
+    try {
+      let accessToken = config.access;
+      if (Date.now() > config.expires - 60000) {
+        const newTokens = await this.refreshToken(config.refresh);
+        accessToken = newTokens.access_token;
+        const expiresIn = newTokens.expires_in || 3600;
+        saveConfig({
+          access: accessToken,
+          expires: Date.now() + expiresIn * 1000
+        });
+      }
+      const response = await fetch(this.usageURL, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": this.userAgent,
+          Accept: "application/json",
+          ...config.accountId ? { "ChatGPT-Account-Id": config.accountId } : {}
+        }
+      });
+      if (!response.ok)
+        throw new Error(`${this.name} quota fetch failed: ${response.status}`);
+      const data = await response.json();
+      return this.parseQuota(data);
+    } catch (e) {
+      console.error(`${this.name} fetch failed:`, e);
+      return null;
+    }
+  }
+  async refreshToken(refreshToken) {
+    const body = {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: this.codexClientId
+    };
+    const response = await fetch(this.tokenURL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok)
+      throw new Error(`${this.name} token refresh failed`);
+    return await response.json();
+  }
+  parseQuota(data) {
+    const models = [];
+    let limitReached = false;
+    if (data.rate_limit) {
+      limitReached = data.rate_limit.limit_reached ?? false;
+      if (data.rate_limit.primary_window) {
+        const used = data.rate_limit.primary_window.used_percent ?? 0;
+        const reset = data.rate_limit.primary_window.reset_at ? new Date(data.rate_limit.primary_window.reset_at * 1000).toISOString() : "";
+        models.push({
+          name: `${this.name}-session`,
+          percentage: 100 - used,
+          resetTime: reset
+        });
+      }
+      if (data.rate_limit.secondary_window) {
+        const used = data.rate_limit.secondary_window.used_percent ?? 0;
+        const reset = data.rate_limit.secondary_window.reset_at ? new Date(data.rate_limit.secondary_window.reset_at * 1000).toISOString() : "";
+        models.push({
+          name: `${this.name}-weekly`,
+          percentage: 100 - used,
+          resetTime: reset
+        });
+      }
+    }
+    return {
+      models,
+      lastUpdated: new Date().toISOString(),
+      isForbidden: limitReached,
+      planType: data.plan_type
+    };
+  }
+}
+
+class QuotaFetcher {
+  authPath = join(homedir(), ".local/share/opencode/auth.json");
+  async fetchAll() {
+    if (!existsSync(this.authPath)) {
+      console.error("Auth file not found:", this.authPath);
+      return {};
+    }
+    const authContent = readFileSync(this.authPath, "utf-8");
+    const authData = JSON.parse(authContent);
+    let dirty = false;
+    const results = {};
+    if (authData.google) {
+      const googleFetcher = new GoogleQuotaFetcher;
+      const quota = await googleFetcher.fetch(authData.google, (updates) => {
+        if (authData.google)
+          Object.assign(authData.google, updates);
+        dirty = true;
+      });
+      if (quota)
+        results["google"] = quota;
+    }
+    if (authData.openai) {
+      const fetcher = new ChatGPTQuotaFetcher("openai");
+      const quota = await fetcher.fetch(authData.openai, (updates) => {
+        if (authData.openai)
+          Object.assign(authData.openai, updates);
+        dirty = true;
+      });
+      if (quota)
+        results["openai"] = quota;
+    }
+    if (authData.codex) {
+      const fetcher = new ChatGPTQuotaFetcher("codex");
+      const quota = await fetcher.fetch(authData.codex, (updates) => {
+        if (authData.codex)
+          Object.assign(authData.codex, updates);
+        dirty = true;
+      });
+      if (quota)
+        results["codex"] = quota;
+    }
+    if (dirty) {
+      try {
+        writeFileSync(this.authPath, JSON.stringify(authData, null, 2));
+      } catch (e) {
+        console.error("Failed to save updated tokens:", e);
+      }
+    }
+    return results;
+  }
+}
+if (false) {}
+
+// ralph.ts
+var VERSION = "1.0.9";
+var stateDir = join2(process.cwd(), ".opencode");
+var statePath = join2(stateDir, "ralph-loop.state.json");
+var contextPath = join2(stateDir, "ralph-context.md");
+var historyPath = join2(stateDir, "ralph-history.json");
+var args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  console.log(`
+Ralph Wiggum Loop - Iterative AI development with OpenCode
+
+Usage:
+  ralph "<prompt>" [options]
+  ralph --prompt-file <path> [options]
+
+Arguments:
+  prompt              Task description for the AI to work on
+
+Options:
+  --min-iterations N  Minimum iterations before completion allowed (default: 1)
+  --max-iterations N  Maximum iterations before stopping (default: unlimited)
+  --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
+  --model MODEL       Model to use (e.g., anthropic/claude-sonnet), or comma-separated list
+  --prompt-file, --file, -f  Read prompt content from a file
+  --no-stream         Buffer OpenCode output and print at the end
+  --verbose-tools     Print every tool line (disable compact tool summary)
+  --no-plugins        Disable non-auth OpenCode plugins for this run
+  --no-commit         Don't auto-commit after each iteration
+  --docker-image IMG  Run opencode in a docker container using image IMG
+  --docker-args ARGS  Additional arguments for docker run (e.g. "-v /mnt:/mnt")
+  --devcontainer-service SVC  Run opencode in devcontainer service SVC
+  --allow-all         Auto-approve all tool permissions (for non-interactive use)
+  --load-config PATH  Load run configuration from a JSON file
+  --version, -v       Show version
+  --help, -h          Show this help
+
+Commands:
+  --status            Show current Ralph loop status and history
+  --add-context TEXT  Add context for the next iteration (or edit .opencode/ralph-context.md)
+  --clear-context     Clear any pending context
+
+Examples:
+  ralph "Build a REST API for todos"
+  ralph "Fix the auth bug" --max-iterations 10
+  ralph "Add tests" --completion-promise "ALL TESTS PASS" --model openai/gpt-5.1
+  ralph --prompt-file ./prompt.md --max-iterations 5
+  ralph --status                                        # Check loop status
+  ralph --add-context "Focus on the auth module first"  # Add hint for next iteration
+
+How it works:
+  1. Sends your prompt to OpenCode
+  2. AI works on the task
+  3. Checks output for completion promise
+  4. If not complete, repeats with same prompt
+  5. AI sees its previous work in files
+  6. Continues until promise detected or max iterations
+
+To stop manually: Ctrl+C
+
+Learn more: https://ghuntley.com/ralph/
+`);
+  process.exit(0);
+}
+if (args.includes("--version") || args.includes("-v")) {
+  console.log(`ralph ${VERSION}`);
+  process.exit(0);
+}
+function loadHistory() {
+  if (!existsSync2(historyPath)) {
+    return {
+      iterations: [],
+      totalDurationMs: 0,
+      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+    };
+  }
+  try {
+    return JSON.parse(readFileSync2(historyPath, "utf-8"));
+  } catch {
+    return {
+      iterations: [],
+      totalDurationMs: 0,
+      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+    };
+  }
+}
+function saveHistory(history) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync2(historyPath, JSON.stringify(history, null, 2));
+}
+function clearHistory() {
+  if (existsSync2(historyPath)) {
+    try {
+      __require("fs").unlinkSync(historyPath);
+    } catch {}
+  }
+}
+if (args.includes("--status")) {
+  const state = loadState();
+  const history = loadHistory();
+  const context = existsSync2(contextPath) ? readFileSync2(contextPath, "utf-8").trim() : null;
+  console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551                    Ralph Wiggum Status                           \u2551
+\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+`);
+  if (state?.active) {
+    const elapsed = Date.now() - new Date(state.startedAt).getTime();
+    const elapsedStr = formatDurationLong(elapsed);
+    console.log(`\uD83D\uDD04 ACTIVE LOOP`);
+    console.log(`   Iteration:    ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}`);
+    console.log(`   Started:      ${state.startedAt}`);
+    console.log(`   Elapsed:      ${elapsedStr}`);
+    console.log(`   Promise:      ${state.completionPromise}`);
+    if (state.model) {
+      console.log(`   Model:        ${state.model} ${state.modelQueue && state.modelQueue.length > 1 ? `(Model ${state.currentModelIndex + 1}/${state.modelQueue.length} in queue)` : ""}`);
+    }
+    console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
+  } else {
+    console.log(`\u23F9\uFE0F  No active loop`);
+  }
+  if (context) {
+    console.log(`
+\uD83D\uDCDD PENDING CONTEXT (will be injected next iteration):`);
+    console.log(`   ${context.split(`
+`).join(`
+   `)}`);
+  }
+  if (history.iterations.length > 0) {
+    console.log(`
+\uD83D\uDCCA HISTORY (${history.iterations.length} iterations)`);
+    console.log(`   Total time:   ${formatDurationLong(history.totalDurationMs)}`);
+    const recent = history.iterations.slice(-5);
+    console.log(`
+   Recent iterations:`);
+    for (const iter of recent) {
+      const tools = Object.entries(iter.toolsUsed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}:${v}`).join(" ");
+      const status = iter.completionDetected ? "\u2705" : iter.exitCode !== 0 ? "\u274C" : "\uD83D\uDD04";
+      console.log(`   ${status} #${iter.iteration}: ${formatDurationLong(iter.durationMs)} | ${tools || "no tools"}`);
+    }
+    const struggle = history.struggleIndicators;
+    const hasRepeatedErrors = Object.values(struggle.repeatedErrors).some((count) => count >= 2);
+    if (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3 || hasRepeatedErrors) {
+      console.log(`
+\u26A0\uFE0F  STRUGGLE INDICATORS:`);
+      if (struggle.noProgressIterations >= 3) {
+        console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+      }
+      if (struggle.shortIterations >= 3) {
+        console.log(`   - ${struggle.shortIterations} very short iterations (< 30s)`);
+      }
+      const topErrors = Object.entries(struggle.repeatedErrors).filter(([_, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      for (const [error, count] of topErrors) {
+        console.log(`   - Same error ${count}x: "${error.substring(0, 50)}..."`);
+      }
+      console.log(`
+   \uD83D\uDCA1 Consider using: ralph --add-context "your hint here"`);
+    }
+  }
+  console.log("");
+  process.exit(0);
+}
+var addContextIdx = args.indexOf("--add-context");
+if (addContextIdx !== -1) {
+  const contextText = args[addContextIdx + 1];
+  if (!contextText) {
+    console.error("Error: --add-context requires a text argument");
+    console.error('Usage: ralph --add-context "Your context or hint here"');
+    process.exit(1);
+  }
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  const timestamp = new Date().toISOString();
+  const newEntry = `
+## Context added at ${timestamp}
+${contextText}
+`;
+  if (existsSync2(contextPath)) {
+    const existing = readFileSync2(contextPath, "utf-8");
+    writeFileSync2(contextPath, existing + newEntry);
+  } else {
+    writeFileSync2(contextPath, `# Ralph Loop Context
+${newEntry}`);
+  }
+  console.log(`\u2705 Context added for next iteration`);
+  console.log(`   File: ${contextPath}`);
+  const state = loadState();
+  if (state?.active) {
+    console.log(`   Will be picked up in iteration ${state.iteration + 1}`);
+  } else {
+    console.log(`   Will be used when loop starts`);
+  }
+  process.exit(0);
+}
+if (args.includes("--clear-context")) {
+  if (existsSync2(contextPath)) {
+    __require("fs").unlinkSync(contextPath);
+    console.log(`\u2705 Context cleared`);
+  } else {
+    console.log(`\u2139\uFE0F  No pending context to clear`);
+  }
+  process.exit(0);
+}
+function formatDurationLong(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+var prompt = "";
+var minIterations = 1;
+var maxIterations = 0;
+var completionPromise = "COMPLETE";
+var model = "";
+var autoCommit = true;
+var disablePlugins = false;
+var allowAllPermissions = false;
+var promptFile = "";
+var streamOutput = true;
+var verboseTools = false;
+var promptSource = "";
+var dockerImage = "";
+var dockerArgs = [];
+var devcontainerService = "";
+var currentProc = null;
+var containerName = "";
+var loadConfigPath = "";
+var promptParts = [];
+for (let i = 0;i < args.length; i++) {
+  const arg = args[i];
+  if (arg === "--min-iterations") {
+    const val = args[++i];
+    if (!val || isNaN(parseInt(val))) {
+      console.error("Error: --min-iterations requires a number");
+      process.exit(1);
+    }
+    minIterations = parseInt(val);
+  } else if (arg === "--max-iterations") {
+    const val = args[++i];
+    if (!val || isNaN(parseInt(val))) {
+      console.error("Error: --max-iterations requires a number");
+      process.exit(1);
+    }
+    maxIterations = parseInt(val);
+  } else if (arg === "--completion-promise") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --completion-promise requires a value");
+      process.exit(1);
+    }
+    completionPromise = val;
+  } else if (arg === "--model") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --model requires a value");
+      process.exit(1);
+    }
+    model = val;
+  } else if (arg === "--prompt-file" || arg === "--file" || arg === "-f") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --prompt-file requires a file path");
+      process.exit(1);
+    }
+    promptFile = val;
+  } else if (arg === "--no-stream") {
+    streamOutput = false;
+  } else if (arg === "--stream") {
+    streamOutput = true;
+  } else if (arg === "--verbose-tools") {
+    verboseTools = true;
+  } else if (arg === "--no-commit") {
+    autoCommit = false;
+  } else if (arg === "--no-plugins") {
+    disablePlugins = true;
+  } else if (arg === "--allow-all") {
+    allowAllPermissions = true;
+  } else if (arg === "--load-config") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --load-config requires a file path");
+      process.exit(1);
+    }
+    loadConfigPath = val;
+  } else if (arg === "--docker-image") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --docker-image requires an image name");
+      process.exit(1);
+    }
+    dockerImage = val;
+  } else if (arg === "--docker-args") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --docker-args requires a value");
+      process.exit(1);
+    }
+    const matches = val.match(/(?:[^\s"]+|"[^"]*")+/g);
+    if (matches) {
+      dockerArgs.push(...matches.map((s) => s.replace(/^"|"$/g, "")));
+    }
+  } else if (arg === "--devcontainer-service") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --devcontainer-service requires a service name");
+      process.exit(1);
+    }
+    devcontainerService = val;
+  } else if (arg.startsWith("-")) {
+    console.error(`Error: Unknown option: ${arg}`);
+    console.error("Run 'ralph --help' for available options");
+    process.exit(1);
+  } else {
+    promptParts.push(arg);
+  }
+}
+function readPromptFile(path) {
+  if (!existsSync2(path)) {
+    console.error(`Error: Prompt file not found: ${path}`);
+    process.exit(1);
+  }
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile()) {
+      console.error(`Error: Prompt path is not a file: ${path}`);
+      process.exit(1);
+    }
+  } catch {
+    console.error(`Error: Unable to stat prompt file: ${path}`);
+    process.exit(1);
+  }
+  try {
+    const content = readFileSync2(path, "utf-8");
+    if (!content.trim()) {
+      console.error(`Error: Prompt file is empty: ${path}`);
+      process.exit(1);
+    }
+    return content;
+  } catch {
+    console.error(`Error: Unable to read prompt file: ${path}`);
+    process.exit(1);
+  }
+}
+if (loadConfigPath) {
+  if (!existsSync2(loadConfigPath)) {
+    console.error(`Error: Config file not found: ${loadConfigPath}`);
+    process.exit(1);
+  }
+  try {
+    const config = JSON.parse(readFileSync2(loadConfigPath, "utf-8"));
+    if (config.run) {
+      const r = config.run;
+      if (r.prompt)
+        prompt = r.prompt;
+      if (r.modelQueue)
+        model = r.modelQueue.join(",");
+      if (r.minIterations !== undefined)
+        minIterations = r.minIterations;
+      if (r.maxIterations !== undefined)
+        maxIterations = r.maxIterations;
+      if (r.completionPromise)
+        completionPromise = r.completionPromise;
+      if (r.mode === "docker" && r.docker) {
+        dockerImage = r.docker.image || dockerImage;
+        if (r.docker.args) {
+          const matches = r.docker.args.match(/(?:[^\s"]+|"[^"]*")+/g);
+          if (matches) {
+            dockerArgs.push(...matches.map((s) => s.replace(/^"|"$/g, "")));
+          }
+        }
+      } else if (r.mode === "devcontainer" && r.devcontainer) {
+        devcontainerService = r.devcontainer.service || devcontainerService;
+      }
+      if (r.flags) {
+        if (r.flags.noCommit !== undefined)
+          autoCommit = !r.flags.noCommit;
+        if (r.flags.verboseTools !== undefined)
+          verboseTools = r.flags.verboseTools;
+        if (r.flags.noPlugins !== undefined)
+          disablePlugins = r.flags.noPlugins;
+        if (r.flags.allowAll !== undefined)
+          allowAllPermissions = r.flags.allowAll;
+        if (r.flags.noStream !== undefined)
+          streamOutput = !r.flags.noStream;
+      }
+    }
+  } catch (e) {
+    console.error(`Error: Failed to parse config file: ${loadConfigPath}`);
+    process.exit(1);
+  }
+}
+if (promptFile) {
+  promptSource = promptFile;
+  prompt = readPromptFile(promptFile);
+} else if (promptParts.length === 1 && existsSync2(promptParts[0])) {
+  promptSource = promptParts[0];
+  prompt = readPromptFile(promptParts[0]);
+} else {
+  prompt = promptParts.join(" ");
+}
+if (!prompt) {
+  console.error("Error: No prompt provided");
+  console.error('Usage: ralph "Your task description" [options]');
+  console.error("Run 'ralph --help' for more information");
+  process.exit(1);
+}
+if (maxIterations > 0 && minIterations > maxIterations) {
+  console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
+  process.exit(1);
+}
+function saveState(state) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync2(statePath, JSON.stringify(state, null, 2));
+}
+function loadState() {
+  if (!existsSync2(statePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync2(statePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function clearState() {
+  if (existsSync2(statePath)) {
+    try {
+      __require("fs").unlinkSync(statePath);
+    } catch {}
+  }
+}
+function loadPluginsFromConfig(configPath) {
+  if (!existsSync2(configPath)) {
+    return [];
+  }
+  try {
+    const raw = readFileSync2(configPath, "utf-8");
+    const withoutBlock = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+    const withoutLine = withoutBlock.replace(/^\s*\/\/.*$/gm, "");
+    const parsed = JSON.parse(withoutLine);
+    const plugins = parsed?.plugin;
+    return Array.isArray(plugins) ? plugins.filter((p) => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function ensureRalphConfig(options) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  const configPath = join2(stateDir, "ralph-opencode.config.json");
+  const userConfigPath = join2(process.env.XDG_CONFIG_HOME ?? join2(process.env.HOME ?? "", ".config"), "opencode", "opencode.json");
+  const projectConfigPath = join2(process.cwd(), ".opencode", "opencode.json");
+  const config = {
+    $schema: "https://opencode.ai/config.json"
+  };
+  if (options.filterPlugins) {
+    const plugins = [
+      ...loadPluginsFromConfig(userConfigPath),
+      ...loadPluginsFromConfig(projectConfigPath)
+    ];
+    config.plugin = Array.from(new Set(plugins)).filter((p) => /auth/i.test(p));
+  }
+  if (options.allowAllPermissions) {
+    config.permission = {
+      read: "allow",
+      edit: "allow",
+      glob: "allow",
+      grep: "allow",
+      list: "allow",
+      bash: "allow",
+      task: "allow",
+      webfetch: "allow",
+      websearch: "allow",
+      codesearch: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+      question: "allow",
+      lsp: "allow",
+      external_directory: "allow"
+    };
+  }
+  writeFileSync2(configPath, JSON.stringify(config, null, 2));
+  return configPath;
+  return configPath;
+}
+async function checkAndSortModels(models) {
+  console.log("Checking model quotas...");
+  const fetcher = new QuotaFetcher;
+  const quotas = await fetcher.fetchAll();
+  const validModels = [];
+  const lowQuotaModels = [];
+  for (const model2 of models) {
+    const [provider, modelName] = model2.split("/");
+    const p = provider.toLowerCase();
+    let hasQuota = true;
+    let percentage = 100;
+    if (quotas[p]) {
+      const q = quotas[p];
+      if (q.isForbidden) {
+        hasQuota = false;
+        percentage = 0;
+      } else {
+        if (p === "openai" || p === "codex") {
+          const session = q.models.find((m) => m.name.includes("session"));
+          if (session) {
+            percentage = session.percentage;
+          }
+        } else if (p === "google") {
+          if (modelName) {
+            const match = q.models.find((m) => m.name.includes(modelName) || modelName.includes(m.name));
+            if (match) {
+              percentage = match.percentage;
+            }
+          }
+        }
+        if (percentage < 10)
+          hasQuota = false;
+      }
+    }
+    if (hasQuota) {
+      validModels.push(model2);
+    } else {
+      console.warn(`\u26A0\uFE0F  Skipping model ${model2} due to low/exhausted quota (${percentage.toFixed(1)}%)`);
+      lowQuotaModels.push(model2);
+    }
+  }
+  if (validModels.length === 0) {
+    console.warn("\u26A0\uFE0F  All requested models have low quota! Falling back to original list.");
+    return models;
+  }
+  return validModels;
+}
+function loadProviderConfig(stateDir2) {
+  const defaults = {
+    anthropic: { pattern: "overloaded_error|rate_limit_error|429" },
+    openai: { pattern: "rate_limit_exceeded|insufficient_quota|429" },
+    google: { pattern: "All Antigravity endpoints failed" },
+    mistral: { pattern: "rate_limit_exceeded|429" }
+  };
+  const userConfigPath = join2(stateDir2, "ralph-providers.json");
+  if (existsSync2(userConfigPath)) {
+    try {
+      const userConfig = JSON.parse(readFileSync2(userConfigPath, "utf-8"));
+      return { ...defaults, ...userConfig };
+    } catch (e) {
+      console.warn("\u26A0\uFE0F  Failed to parse ralph-providers.json, using defaults");
+    }
+  }
+  return defaults;
+}
+function loadContext() {
+  if (!existsSync2(contextPath)) {
+    return null;
+  }
+  try {
+    const content = readFileSync2(contextPath, "utf-8").trim();
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+function clearContext() {
+  if (existsSync2(contextPath)) {
+    try {
+      __require("fs").unlinkSync(contextPath);
+    } catch {}
+  }
+}
+function buildPrompt(state) {
+  const context = loadContext();
+  const contextSection = context ? `
+## Additional Context (added by user mid-loop)
+
+${context}
+
+---
+` : "";
+  return `
+# Ralph Wiggum Loop - Iteration ${state.iteration}
+
+You are in an iterative development loop. Work on the task below until you can genuinely complete it.
+${contextSection}
+## Your Task
+
+${state.prompt}
+
+## Instructions
+
+1. Read the current state of files to understand what's been done
+2. **Update your todo list** - Use the TodoWrite tool to track progress and plan remaining work
+3. Make progress on the task
+4. Run tests/verification if applicable
+5. When the task is GENUINELY COMPLETE, output:
+   <promise>${state.completionPromise}</promise>
+
+## Critical Rules
+
+- ONLY output <promise>${state.completionPromise}</promise> when the task is truly done
+- Do NOT lie or output false promises to exit the loop
+- If stuck, try a different approach
+- Check your work before claiming completion
+- The loop will continue until you succeed
+- **IMPORTANT**: Update your todo list at the start of each iteration to show progress
+
+## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
+
+Now, work on the task. Good luck!
+`.trim();
+}
+function checkCompletion(output, promise) {
+  const promisePattern = new RegExp(`<promise>\\s*${escapeRegex(promise)}\\s*</promise>`, "i");
+  return promisePattern.test(output);
+}
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function detectPlaceholderPluginError(output) {
+  return output.includes("ralph-wiggum is not yet ready for use. This is a placeholder package.");
+}
+function stripAnsi(input) {
+  return input.replace(/\x1B\[[0-9;]*m/g, "");
+}
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+function formatToolSummary(toolCounts, maxItems = 6) {
+  if (!toolCounts.size)
+    return "";
+  const entries = Array.from(toolCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const shown = entries.slice(0, maxItems);
+  const remaining = entries.length - shown.length;
+  const parts = shown.map(([name, count]) => `${name} ${count}`);
+  if (remaining > 0) {
+    parts.push(`+${remaining} more`);
+  }
+  return parts.join(" \u2022 ");
+}
+function collectToolSummaryFromText(text) {
+  const counts = new Map;
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const match = stripAnsi(line).match(/^\|\s{2}([A-Za-z0-9_-]+)/);
+    if (match) {
+      const tool = match[1];
+      counts.set(tool, (counts.get(tool) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+function printIterationSummary(params) {
+  const toolSummary = formatToolSummary(params.toolCounts);
+  console.log(`
+Iteration Summary`);
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  console.log(`Iteration: ${params.iteration}`);
+  console.log(`Elapsed:   ${formatDuration(params.elapsedMs)}`);
+  if (toolSummary) {
+    console.log(`Tools:     ${toolSummary}`);
+  } else {
+    console.log("Tools:     none");
+  }
+  console.log(`Exit code: ${params.exitCode}`);
+  console.log(`Completion promise: ${params.completionDetected ? "detected" : "not detected"}`);
+}
+async function streamProcessOutput(proc, options) {
+  const toolCounts = new Map;
+  let stdoutText = "";
+  let stderrText = "";
+  let lastPrintedAt = Date.now();
+  let lastActivityAt = Date.now();
+  let lastToolSummaryAt = 0;
+  const compactTools = options.compactTools;
+  const maybePrintToolSummary = (force = false) => {
+    if (!compactTools || toolCounts.size === 0)
+      return;
+    const now = Date.now();
+    if (!force && now - lastToolSummaryAt < options.toolSummaryIntervalMs) {
+      return;
+    }
+    const summary = formatToolSummary(toolCounts);
+    if (summary) {
+      console.log(`| Tools    ${summary}`);
+      lastPrintedAt = Date.now();
+      lastToolSummaryAt = Date.now();
+    }
+  };
+  const handleLine = (line, isError) => {
+    lastActivityAt = Date.now();
+    const match = stripAnsi(line).match(/^\|\s{2}([A-Za-z0-9_-]+)/);
+    if (compactTools && match) {
+      const tool = match[1];
+      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + 1);
+      maybePrintToolSummary();
+      return;
+    }
+    if (line.length === 0) {
+      console.log("");
+      lastPrintedAt = Date.now();
+      return;
+    }
+    if (isError) {
+      console.error(line);
+    } else {
+      console.log(line);
+    }
+    lastPrintedAt = Date.now();
+  };
+  const streamText = async (stream, onText, isError) => {
+    if (!stream)
+      return;
+    const reader = stream.getReader();
+    const decoder = new TextDecoder;
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done)
+        break;
+      const text = decoder.decode(value, { stream: true });
+      if (text.length > 0) {
+        onText(text);
+        buffer += text;
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          handleLine(line, isError);
+        }
+      }
+    }
+    const flushed = decoder.decode();
+    if (flushed.length > 0) {
+      onText(flushed);
+      buffer += flushed;
+    }
+    if (buffer.length > 0) {
+      handleLine(buffer, isError);
+    }
+  };
+  const heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    if (now - lastPrintedAt >= options.heartbeatIntervalMs) {
+      const elapsed = formatDuration(now - options.iterationStart);
+      const sinceActivity = formatDuration(now - lastActivityAt);
+      console.log(`\u23F3 working... elapsed ${elapsed} \xB7 last activity ${sinceActivity} ago`);
+      lastPrintedAt = now;
+    }
+  }, options.heartbeatIntervalMs);
+  try {
+    await Promise.all([
+      streamText(proc.stdout, (chunk) => {
+        stdoutText += chunk;
+      }, false),
+      streamText(proc.stderr, (chunk) => {
+        stderrText += chunk;
+      }, true)
+    ]);
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+  if (compactTools) {
+    maybePrintToolSummary(true);
+  }
+  return { stdoutText, stderrText, toolCounts };
+}
+async function captureFileSnapshot() {
+  const files = new Map;
+  try {
+    const status = await $`git status --porcelain`.text();
+    const trackedFiles = await $`git ls-files`.text();
+    const allFiles = new Set;
+    for (const line of status.split(`
+`)) {
+      if (line.trim()) {
+        allFiles.add(line.substring(3).trim());
+      }
+    }
+    for (const file of trackedFiles.split(`
+`)) {
+      if (file.trim()) {
+        allFiles.add(file.trim());
+      }
+    }
+git hash-object ${file} 2>/dev/null || stat -c '%Y' ${file} 2>/dev/null || stat -f '%m' ${file} 2>/dev/null || echo ''`.text();
+        files.set(file, hash.trim());
+      } catch {}
+    }
+  } catch {}
+  return { files };
+}
+function getModifiedFilesSinceSnapshot(before, after) {
+  const changedFiles = [];
+  for (const [file, hash] of after.files) {
+    const prevHash = before.files.get(file);
+    if (prevHash !== hash) {
+      changedFiles.push(file);
+    }
+  }
+  for (const [file] of before.files) {
+    if (!after.files.has(file)) {
+      changedFiles.push(file);
+    }
+  }
+  return changedFiles;
+}
+function extractErrors(output) {
+  const errors = [];
+  const lines = output.split(`
+`);
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (lower.includes("error:") || lower.includes("failed:") || lower.includes("exception:") || lower.includes("typeerror") || lower.includes("syntaxerror") || lower.includes("referenceerror") || lower.includes("test") && lower.includes("fail")) {
+      const cleaned = line.trim().substring(0, 200);
+      if (cleaned && !errors.includes(cleaned)) {
+        errors.push(cleaned);
+      }
+    }
+  }
+  return errors.slice(0, 10);
+}
+async function runRalphLoop() {
+  const existingState = loadState();
+  if (existingState?.active) {
+    console.error(`Error: A Ralph loop is already active (iteration ${existingState.iteration})`);
+    console.error(`Started at: ${existingState.startedAt}`);
+    console.error(`To cancel it, press Ctrl+C in its terminal or delete ${statePath}`);
+    process.exit(1);
+  }
+  console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551                    Ralph Wiggum Loop                            \u2551
+\u2551            Iterative AI Development with OpenCode                \u2551
+\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+`);
+  let initialQueue = model ? model.split(",") : [];
+  if (initialQueue.length > 0) {
+    try {
+      initialQueue = await checkAndSortModels(initialQueue);
+    } catch (e) {
+      console.warn("\u26A0\uFE0F  Failed to check quotas, proceeding with original list:", e);
+    }
+  }
+  const initialModel = initialQueue.length > 0 ? initialQueue[0] : model ? model.split(",")[0] : "";
+  const state = {
+    active: true,
+    iteration: 1,
+    minIterations,
+    maxIterations,
+    completionPromise,
+    prompt,
+    startedAt: new Date().toISOString(),
+    model: initialModel,
+    modelQueue: initialQueue,
+    currentModelIndex: 0
+  };
+  saveState(state);
+  const history = {
+    iterations: [],
+    totalDurationMs: 0,
+    struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+  };
+  saveHistory(history);
+  const promptPreview = prompt.replace(/\s+/g, " ").substring(0, 80) + (prompt.length > 80 ? "..." : "");
+  if (promptSource) {
+    console.log(`Task: ${promptSource}`);
+    console.log(`Preview: ${promptPreview}`);
+  } else {
+    console.log(`Task: ${promptPreview}`);
+  }
+  console.log(`Completion promise: ${completionPromise}`);
+  console.log(`Min iterations: ${minIterations}`);
+  console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
+  if (model)
+    console.log(`Model: ${model}`);
+  if (disablePlugins)
+    console.log("OpenCode plugins: non-auth plugins disabled");
+  if (allowAllPermissions)
+    console.log("Permissions: auto-approve all tools");
+  console.log("");
+  console.log("Starting loop... (Ctrl+C to stop)");
+  console.log("\u2550".repeat(68));
+  currentProc = null;
+  let stopping = false;
+  while (true) {
+    const diskState = loadState();
+    if (diskState) {
+      if (diskState.modelQueue)
+        state.modelQueue = diskState.modelQueue;
+      if (diskState.completionPromise)
+        state.completionPromise = diskState.completionPromise;
+      if (diskState.maxIterations !== undefined) {
+        state.maxIterations = diskState.maxIterations;
+        maxIterations = diskState.maxIterations;
+      }
+      if (state.modelQueue && state.currentModelIndex >= state.modelQueue.length) {
+        state.currentModelIndex = Math.max(0, state.modelQueue.length - 1);
+      }
+    }
+    if (maxIterations > 0 && state.iteration > maxIterations) {
+      console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+      console.log(`\u2551  Max iterations (${maxIterations}) reached. Loop stopped.`);
+      console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+      console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+      clearState();
+      break;
+    }
+    const iterInfo = maxIterations > 0 ? ` / ${maxIterations}` : "";
+    const minInfo = minIterations > 1 && state.iteration < minIterations ? ` (min: ${minIterations})` : "";
+    console.log(`
+\uD83D\uDD04 Iteration ${state.iteration}${iterInfo}${minInfo}`);
+    console.log("\u2500".repeat(68));
+    const contextAtStart = loadContext();
+    const snapshotBefore = await captureFileSnapshot();
+    const fullPrompt = buildPrompt(state);
+    const iterationStart = Date.now();
+    try {
+      const cmdArgs = ["run"];
+      let currentModel = state.model;
+      if (state.modelQueue && state.modelQueue.length > 0) {
+        if (state.currentModelIndex >= state.modelQueue.length) {
+          state.currentModelIndex = state.modelQueue.length - 1;
+        }
+        currentModel = state.modelQueue[state.currentModelIndex];
+        state.model = currentModel;
+        saveState(state);
+      }
+      if (currentModel) {
+        cmdArgs.push("-m", currentModel);
+      }
+      cmdArgs.push(fullPrompt);
+      const env = { ...process.env };
+      if (disablePlugins || allowAllPermissions) {
+        env.OPENCODE_CONFIG = ensureRalphConfig({
+          filterPlugins: disablePlugins,
+          allowAllPermissions
+        });
+      }
+      let executable = "opencode";
+      let argsToSpawn = [...cmdArgs];
+      if (dockerImage) {
+        executable = "docker";
+        containerName = `ralph-runner-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const cwd = process.cwd();
+        argsToSpawn = [
+          "run",
+          "--rm",
+          "-i",
+          "--name",
+          containerName,
+          "-v",
+          `${cwd}:${cwd}`,
+          "-w",
+          cwd,
+          "--env",
+          "OPENCODE_CONFIG",
+          ...dockerArgs,
+          ...Object.keys(process.env).filter((k) => k.startsWith("OPENAI_") || k.startsWith("ANTHROPIC_") || k.startsWith("GOOGLE_") || k === "NVM_DIR" || k === "BUN_INSTALL").flatMap((k) => ["--env", k]),
+          dockerImage,
+          "opencode",
+          ...cmdArgs
+        ];
+      } else if (devcontainerService) {
+        executable = "devcontainer";
+        argsToSpawn = [
+          "exec",
+          "--workspace-folder",
+          process.cwd(),
+          "--service-name",
+          devcontainerService,
+          "opencode",
+          ...cmdArgs
+        ];
+      }
+      currentProc = Bun.spawn([executable, ...argsToSpawn], {
+        env,
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "pipe"
+      });
+      const proc = currentProc;
+      const exitCodePromise = proc.exited;
+      let quotaInterrupted = false;
+      const quotaInterval = setInterval(async () => {
+        if (!state.model)
+          return;
+        try {
+          const fetcher = new QuotaFetcher;
+          const quotas = await fetcher.fetchAll();
+          const currentModel2 = state.model;
+          const [provider, modelName] = currentModel2.split("/");
+          const p = provider.toLowerCase();
+          let percentage = 100;
+          let isForbidden = false;
+          if (quotas[p]) {
+            const q = quotas[p];
+            if (q.isForbidden)
+              isForbidden = true;
+            else {
+              if (p === "openai" || p === "codex") {
+                const session = q.models.find((m) => m.name.includes("session"));
+                if (session)
+                  percentage = session.percentage;
+              } else if (p === "google") {
+                if (modelName) {
+                  const match = q.models.find((m) => m.name.includes(modelName));
+                  if (match)
+                    percentage = match.percentage;
+                }
+              }
+            }
+          }
+          if (isForbidden || percentage < 5) {
+            console.log(`
+\u26A0\uFE0F  Active Quota Monitor: Model ${currentModel2} exhausted (${Math.round(percentage)}%). Switching...`);
+            if (state.modelQueue && state.currentModelIndex < state.modelQueue.length - 1) {
+              state.currentModelIndex++;
+              state.model = state.modelQueue[state.currentModelIndex];
+              saveState(state);
+              quotaInterrupted = true;
+              proc.kill();
+            } else {
+              console.log("   No more models in queue. Continuing with current model until failure.");
+            }
+          }
+        } catch (e) {}
+      }, 10 * 60 * 1000);
+      exitCodePromise.then(() => clearInterval(quotaInterval));
+      const skipSignalPath = join2(stateDir, "ralph-skip.signal");
+      const signalInterval = setInterval(() => {
+        if (existsSync2(skipSignalPath)) {
+          console.log(`
+\u23E9 Skip signal received. Skipping iteration...`);
+          try {
+            __require("fs").unlinkSync(skipSignalPath);
+          } catch {}
+          quotaInterrupted = true;
+          proc.kill();
+        }
+      }, 1000);
+      exitCodePromise.then(() => clearInterval(signalInterval));
+      let result = "";
+      let stderr = "";
+      let toolCounts = new Map;
+      if (streamOutput) {
+        const streamed = await streamProcessOutput(proc, {
+          compactTools: !verboseTools,
+          toolSummaryIntervalMs: 3000,
+          heartbeatIntervalMs: 1e4,
+          iterationStart
+        });
+        result = streamed.stdoutText;
+        stderr = streamed.stderrText;
+        toolCounts = streamed.toolCounts;
+      } else {
+        const stdoutPromise = new Response(proc.stdout).text();
+        const stderrPromise = new Response(proc.stderr).text();
+        [result, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+        toolCounts = collectToolSummaryFromText(`${result}
+${stderr}`);
+      }
+      const exitCode = await exitCodePromise;
+      currentProc = null;
+      if (!streamOutput) {
+        if (stderr) {
+          console.error(stderr);
+        }
+        console.log(result);
+      }
+      const combinedOutput = `${result}
+${stderr}`;
+      if (state.modelQueue && state.modelQueue.length > 1) {
+        const providers = loadProviderConfig(stateDir);
+        const currentModel2 = state.modelQueue[state.currentModelIndex];
+        const providerMatch = currentModel2.match(/^([^/]+)/);
+        const providerName = providerMatch ? providerMatch[1].toLowerCase() : currentModel2.toLowerCase();
+        const config = providers[providerName];
+        if (config) {
+          const errorPattern = new RegExp(config.pattern, "i");
+          if (errorPattern.test(combinedOutput)) {
+            console.log(`
+\u26A0\uFE0F  Quota/Rate Limit detected for model ${currentModel2} using pattern "${config.pattern}"`);
+            if (state.currentModelIndex < state.modelQueue.length - 1) {
+              console.log(`   Switching to next model: ${state.modelQueue[state.currentModelIndex + 1]}...`);
+              state.currentModelIndex++;
+              state.model = state.modelQueue[state.currentModelIndex];
+              saveState(state);
+            } else {
+              console.warn(`   \u26A0\uFE0F  All provided models have been exhausted or last model failed.`);
+            }
+          }
+        }
+      }
+      const completionDetected = checkCompletion(combinedOutput, completionPromise);
+      const iterationDuration = Date.now() - iterationStart;
+      printIterationSummary({
+        iteration: state.iteration,
+        elapsedMs: iterationDuration,
+        toolCounts,
+        exitCode,
+        completionDetected
+      });
+      const snapshotAfter = await captureFileSnapshot();
+      const filesModified = getModifiedFilesSinceSnapshot(snapshotBefore, snapshotAfter);
+      const errors = extractErrors(combinedOutput);
+      const iterationRecord = {
+        iteration: state.iteration,
+        startedAt: new Date(iterationStart).toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: iterationDuration,
+        toolsUsed: Object.fromEntries(toolCounts),
+        filesModified,
+        exitCode,
+        completionDetected,
+        errors
+      };
+      history.iterations.push(iterationRecord);
+      history.totalDurationMs += iterationDuration;
+      if (filesModified.length === 0) {
+        history.struggleIndicators.noProgressIterations++;
+      } else {
+        history.struggleIndicators.noProgressIterations = 0;
+      }
+      if (iterationDuration < 30000) {
+        history.struggleIndicators.shortIterations++;
+      } else {
+        history.struggleIndicators.shortIterations = 0;
+      }
+      if (errors.length === 0) {
+        history.struggleIndicators.repeatedErrors = {};
+      } else {
+        for (const error of errors) {
+          const key = error.substring(0, 100);
+          history.struggleIndicators.repeatedErrors[key] = (history.struggleIndicators.repeatedErrors[key] || 0) + 1;
+        }
+      }
+      saveHistory(history);
+      const struggle = history.struggleIndicators;
+      if (state.iteration > 2 && (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3)) {
+        console.log(`
+\u26A0\uFE0F  Potential struggle detected:`);
+        if (struggle.noProgressIterations >= 3) {
+          console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+        }
+        if (struggle.shortIterations >= 3) {
+          console.log(`   - ${struggle.shortIterations} very short iterations`);
+        }
+        console.log(`   \uD83D\uDCA1 Tip: Use 'ralph --add-context "hint"' in another terminal to guide the agent`);
+      }
+      if (detectPlaceholderPluginError(combinedOutput)) {
+        console.error(`
+\u274C OpenCode tried to load the legacy 'ralph-wiggum' plugin. This package is CLI-only.`);
+        console.error("Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.");
+        clearState();
+        process.exit(1);
+      }
+      if (exitCode !== 0) {
+        if (quotaInterrupted) {
+          console.log("   Restarting iteration with new model...");
+        } else {
+          console.warn(`
+\u26A0\uFE0F  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
+        }
+      }
+      if (quotaInterrupted) {
+        continue;
+      }
+      if (completionDetected) {
+        if (state.iteration < minIterations) {
+          console.log(`
+\u23F3 Completion promise detected, but minimum iterations (${minIterations}) not yet reached.`);
+          console.log(`   Continuing to iteration ${state.iteration + 1}...`);
+        } else {
+          console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+          console.log(`\u2551  \u2705 Completion promise detected: <promise>${completionPromise}</promise>`);
+          console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
+          console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+          console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+          clearState();
+          clearHistory();
+          clearContext();
+          break;
+        }
+      }
+      if (contextAtStart) {
+        console.log(`\uD83D\uDCDD Context was consumed this iteration`);
+        clearContext();
+      }
+      if (autoCommit) {
+        try {
+          const status = await $`git status --porcelain`.text();
+          if (status.trim()) {
+            await $`git add -A`;
+            await $`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
+            console.log(`\uD83D\uDCDD Auto-committed changes`);
+          }
+        } catch {}
+      }
+      state.iteration++;
+      saveState(state);
+      await new Promise((r) => setTimeout(r, 1000));
+    } catch (error) {
+      if (currentProc) {
+          try {
+            currentProc.kill();
+          } catch {}
+          currentProc = null;
+        }
+      console.error(`
+\u274C Error in iteration ${state.iteration}:`, error);
+      console.log("Continuing to next iteration...");
+      const iterationDuration = Date.now() - iterationStart;
+      const errorRecord = {
+        iteration: state.iteration,
+        startedAt: new Date(iterationStart).toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: iterationDuration,
+        toolsUsed: {},
+        filesModified: [],
+        exitCode: -1,
+        completionDetected: false,
+        errors: [String(error).substring(0, 200)]
+      };
+      history.iterations.push(errorRecord);
+      history.totalDurationMs += iterationDuration;
+      saveHistory(history);
+      state.iteration++;
+      saveState(state);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+function cleanupAndExit() {
+  console.log(`
+Gracefully stopping Ralph loop...`);
+  if (containerName) {
+    console.log(`Stopping container ${containerName}...`);
+    try {
+      Bun.spawnSync(["docker", "kill", containerName]);
+    } catch (e) {}
+  }
+  if (currentProc) {
+    try {
+      currentProc.kill();
+    } catch (e) {}
+  }
+  process.exit(130);
+}
+process.on("SIGINT", cleanupAndExit);
+process.on("SIGTERM", cleanupAndExit);
+runRalphLoop().catch((err) => {
+  console.error("Fatal error:", err);
+  process.exit(1);
+});

@@ -113,7 +113,7 @@ ralph "<prompt>" [options]
 Options:
   --max-iterations N       Stop after N iterations (default: unlimited)
   --completion-promise T   Text that signals completion (default: COMPLETE)
-  --model MODEL            OpenCode model to use
+  --model MODEL            OpenCode model (or comma-separated list) to use
   --prompt-file, --file, -f  Read prompt content from a file
   --no-stream              Buffer OpenCode output and print at the end
   --verbose-tools          Print every tool line (disable compact tool summary)

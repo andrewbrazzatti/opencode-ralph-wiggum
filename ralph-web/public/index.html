@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ralph Wiggum Web</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="bg-gradient"></div>
+    
+    <div class="main-layout">
+        <aside class="sidebar">
+            <div class="logo" style="margin-bottom: 1rem; padding-left: 0.5rem;">
+                <span class="logo-emoji">👦🏻</span>
+                <div class="logo-text">
+                    <span class="logo-title">Ralph Wiggum</span>
+                    <span class="logo-subtitle">Command Center</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">
+                    <span>Targets</span>
+                    <button class="icon-btn" onclick="openTargetModal()" title="Add Target">⊕</button>
+                </div>
+                <div id="target-list" class="target-list">
+                    <!-- Dynamic Targets -->
+                    <div class="target-item active">
+                        <span class="target-status online"></span>
+                        <span class="target-name">Local Engine</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">Recent Runs</div>
+                <div id="run-list" class="run-list">
+                    <!-- Dynamic Runs -->
+                    <div class="run-item">
+                        <div class="run-item-header">
+                            <span class="run-item-status status-text-active">Active</span>
+                            <span class="run-item-time">10:04</span>
+                        </div>
+                        <div class="run-item-prompt">Refactor login flow</div>
+                        <div class="run-item-footer">
+                            <span class="run-item-id">#abc1234</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="content">
+            <header>
+                <div class="breadcrumb">
+                    <span id="current-target-name">Local Engine</span>
+                    <span class="breadcrumb-separator">/</span>
+                    <span id="current-run-name">New Run</span>
+                </div>
+                <div class="header-right">
+                    <div id="target-health-warning" class="health-warning" style="display: none;">
+                        ⚠️ Target Offline
+                    </div>
+                    <div class="status-badge" id="status-badge">⏹️ Ready</div>
+                </div>
+            </header>
+
+            <!-- START VIEW -->
+            <div id="view-start" class="view active">
+                <div class="card">
+                    <h2 class="card-title">Start New Loop</h2>
+                    <form onsubmit="return false;">
+                        <div class="grid-form">
+                            <div class="form-group full-width">
+                                <label for="prompt">Task Prompt</label>
+                                <textarea id="prompt" placeholder="Describe the task for Ralph (e.g., 'Refactor the login flow' or 'Fix the bug in api.ts')"></textarea>
+                            </div>
+
+                            <div class="form-group full-width">
+                                <label for="model">Model Queue</label>
+                                <!-- New Model Selector Component -->
+                                <div class="model-selector">
+                                    <div class="model-add-row">
+                                        <select id="model-select" class="form-select">
+                                            <option value="" disabled selected>Loading models...</option>
+                                        </select>
+                                        <button class="btn btn-secondary btn-compact" onclick="addModelFromSelect(event)">Add</button>
+                                    </div>
+                                    <div id="start-queue-list" class="queue-list editable-queue">
+                                        <!-- Dynamic items -->
+                                        <div class="queue-empty-state">No models selected</div>
+                                    </div>
+                                    <!-- Hidden input for legacy compatibility / form data gathering -->
+                                    <input type="hidden" id="model" value=""> 
+                                </div>
+                            </div>
+
+                        <div class="form-group full-width">
+                            <label>Execution Environment</label>
+                            <div class="radio-group">
+                                <label class="radio-card active" onclick="setMode('host')">
+                                    <input type="radio" name="mode" value="host" checked>
+                                    <span class="radio-title">🖥️ Host Machine</span>
+                                    <span class="radio-desc">Run directly on this computer</span>
+                                </label>
+                                <label class="radio-card" onclick="setMode('docker')">
+                                    <input type="radio" name="mode" value="docker">
+                                    <span class="radio-title">🐳 Docker Container</span>
+                                    <span class="radio-desc">Isolate in a specific image</span>
+                                </label>
+                            </div>
+                        </div>
+
+
+
+                        <!-- Host Options -->
+                        <div id="opts-host" class="opts-group">
+                             <div class="form-group full-width">
+                                <label for="host-codedir">Code Directory</label>
+                                <input type="text" id="host-codedir" placeholder="Absolute path to your code (e.g. /home/user/project)">
+                            </div>
+                        </div>
+
+                        <!-- Docker Options -->
+                        <div id="opts-docker" class="opts-group">
+                            <div class="form-group full-width">
+                                <label for="docker">Docker Image</label>
+                                <input type="text" id="docker" placeholder="e.g., node:18-alpine">
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="docker-codedir">Code Directory</label>
+                                <input type="text" id="docker-codedir" placeholder="Local path to your code (mounts to /workspace/code)">
+                            </div>
+                            <!-- NEW: Structured Volume Mounts -->
+                            <div class="form-group full-width">
+                                <label>Volume Mounts</label>
+                                <div id="volume-mounts-list" class="volume-list">
+                                    <!-- Dynamic items injected by JS -->
+                                </div>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="addVolumeMount()">+ Add Volume</button>
+                            </div>
+                            
+                            <!-- Default Opencode Mounts -->
+                            <div class="form-group full-width">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="mount-opencode-config" checked>
+                                    <span>Mount Opencode Config</span>
+                                </label>
+                                <input type="text" id="opencode-config-path" class="input-compact" placeholder="~/.config/opencode">
+                            </div>
+                            <div class="form-group full-width">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="mount-opencode-data" checked>
+                                    <span>Mount Opencode Data</span>
+                                </label>
+                                <input type="text" id="opencode-data-path" class="input-compact" placeholder="~/.local/share/opencode">
+                            </div>
+                            
+                            <!-- Docker Socket -->
+                            <div class="form-group full-width">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="mount-docker-socket">
+                                    <span>Container Has Docker (mount socket)</span>
+                                </label>
+                                <div class="socket-row" style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                                    <input type="text" id="docker-socket-host" class="input-compact" value="/var/run/docker.sock" placeholder="Host path" style="flex: 1;">
+                                    <span style="align-self: center;">→</span>
+                                    <input type="text" id="docker-socket-container" class="input-compact" value="/var/run/docker.sock" placeholder="Container path" style="flex: 1;">
+                                </div>
+                            </div>
+                            
+                            <div class="form-group full-width">
+                                <label for="docker-args">Additional Docker Args</label>
+                                <input type="text" id="docker-args" placeholder="-e ENV=prod --net=host">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="advanced-toggle" onclick="toggleAdvanced()">
+                        <span>⚙️ Advanced Options & Flags</span>
+                    </div>
+
+                    <div class="grid-form advanced-options" id="advanced-options">
+                        <div class="form-group">
+                            <label for="promise">Completion Promise</label>
+                            <input type="text" id="promise" value="COMPLETE">
+                        </div>
+                        <div class="form-group">
+                            <label for="min-iterations">Min Iterations</label>
+                            <input type="number" id="min-iterations" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="iterations">Max Iterations</label>
+                            <input type="number" id="iterations" value="10" min="1" max="100">
+                        </div>
+                        <div class="form-group full-width checkbox-grid">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="no-commit">
+                                <span>Disable Auto-Commit</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="verbose-tools">
+                                <span>Verbose Tool Output</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="no-plugins">
+                                <span>Disable Plugins</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="allow-all">
+                                <span>Auto-Approve Permissions</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="no-stream">
+                                <span>Disable Streaming Output</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="start-actions">
+                        <input type="file" id="config-file-input" style="display: none;" onchange="handleConfigUpload(this)">
+                        <div class="start-actions-left">
+                            <button class="btn btn-secondary" onclick="document.getElementById('config-file-input').click()">📂 Load Config</button>
+                            <button class="btn btn-secondary" onclick="exportConfig()">💾 Export Config</button>
+                        </div>
+                        <div class="start-actions-right">
+                            <button class="btn btn-secondary" onclick="saveConfig()">Save Defaults</button>
+                            <button class="btn btn-danger btn-compact" id="btn-clear-state-start" onclick="clearLoopState()" style="display: none;">
+                                Clear Loop State
+                            </button>
+                            <button class="btn" onclick="startLoop()">
+                                <span>▶ Start Loop</span>
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- ACTIVE VIEW -->
+        <div id="view-active" class="view">
+            <div class="card">
+                <div class="active-header">
+                    <div>
+                        <h2 class="card-title card-title-tight">Active Loop</h2>
+                        <p class="active-prompt" id="active-prompt">Waiting for prompt...</p>
+                    </div>
+                    <div class="iteration-card">
+                        <div class="iteration-label">Iteration</div>
+                        <div class="active-iteration-display">0 / 0</div>
+                        <button class="btn btn-danger btn-compact" id="btn-clear-state" onclick="clearLoopState()" style="display: none;">
+                            Clear Loop State
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Model Queue Section -->
+                <div class="model-queue">
+                    <div class="queue-header">
+                        <span>Model Queue</span>
+                        <div class="queue-subtitle">Next iteration uses top model</div>
+                    </div>
+                    <div class="queue-list" id="queue-list">
+                        <!-- Active Item -->
+                        <div class="queue-item active">
+                            <div class="queue-item-name">
+                                <span class="queue-badge badge-active">Active</span>
+                                <span>claude-3-5-sonnet</span>
+                            </div>
+                            <div class="queue-actions">
+                                <span style="font-size: 0.8rem; color: var(--text-secondary);">Running...</span>
+                            </div>
+                        </div>
+                        <!-- Pending Item 1 -->
+                        <div class="queue-item">
+                            <div class="queue-item-name">
+                                <span class="queue-badge badge-pending">Next</span>
+                                <span>gpt-4o</span>
+                            </div>
+                            <div class="queue-actions">
+                                <button class="icon-btn" title="Move Up">⬆️</button>
+                                <button class="icon-btn" title="Move Down">⬇️</button>
+                                <button class="icon-btn" title="Remove" style="color: #f85149;">✕</button>
+                            </div>
+                        </div>
+                        <!-- Pending Item 2 -->
+                        <div class="queue-item">
+                            <div class="queue-item-name">
+                                <span class="queue-badge badge-pending">3</span>
+                                <span>gemini-1.5-pro</span>
+                            </div>
+                            <div class="queue-actions">
+                                <button class="icon-btn" title="Move Up">⬆️</button>
+                                <button class="icon-btn" title="Move Down">⬇️</button>
+                                <button class="icon-btn" title="Remove" style="color: #f85149;">✕</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="queue-add">
+                         <input class="input-compact" type="text" placeholder="Add model (e.g. mistral/large)">
+                         <button class="btn btn-secondary btn-compact">Add</button>
+                    </div>
+                <!-- Quota Widget -->
+                <div class="model-queue" id="quota-widget" style="display: none;">
+                    <div class="queue-header">
+                        <span>Quota Status</span>
+                        <div class="queue-subtitle">Automated updates every 10m</div>
+                    </div>
+                    <div class="quota-list" id="quota-list">
+                        <!-- Dynamic items -->
+                    </div>
+                </div>
+
+                <div class="terminal" id="terminal">
+                    <div class="log-entry log-info">[10:04:21] Ralph loop started</div>
+                    <div class="log-entry">[10:04:22] <span class="log-tool">task_boundary</span> Planning: Analyzing requirements</div>
+                    <div class="log-entry">[10:04:23] <span class="log-tool">view_file</span> Reading src/profile/Profile.tsx</div>
+                    <div class="log-entry">[10:04:25] <span class="log-tool">view_file</span> Reading src/profile/styles.css</div>
+                    <div class="log-entry log-success">[10:04:30] Analysis complete. Starting implementation.</div>
+                    <div class="log-entry">[10:04:32] <span class="log-tool">replace_file_content</span> Updating Profile.tsx structure</div>
+                    <div class="log-entry log-warn">[10:04:35] ⚠️  Lint warning: Unused import in Profile.tsx</div>
+                    <div class="log-entry">[10:04:36] <span class="log-tool">replace_file_content</span> Fixing lint warning</div>
+                    <div class="log-entry">[10:04:40] <span class="log-tool">run_command</span> npm test src/profile</div>
+                    <div class="log-entry">[10:04:45] Tests passed!</div>
+                    <div class="log-entry">[10:04:46] <span class="log-tool">notify_user</span> Requesting review of changes</div>
+                    <div class="log-entry log-info">[10:04:50] Waiting for next iteration...</div>
+                </div>
+
+                <div class="dashboard-actions">
+                    <button class="btn btn-secondary" onclick="openContextModal()">
+                        <span>📝 Add Hint / Context</span>
+                    </button>
+                    <button class="btn btn-danger" onclick="stopLoop()">
+                        <span>⏹ Stop Execution</span>
+                    </button>
+                    <button class="btn btn-secondary" onclick="skipIteration()">
+                        <span>⏩ Skip Iteration</span>
+                    </button>
+                    <div class="dashboard-spacer"></div>
+                    <span id="run-status-indicator" class="running-indicator">
+                        <span class="status-dot running-dot"></span>
+                        <span class="status-text">Running</span>
+                    </span>
+                    <button class="btn btn-secondary" id="btn-new-loop" style="display: none;" onclick="resetToStart()">
+                        <span>🔄 New Loop</span>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Target Modal -->
+    <div class="modal-overlay" id="target-modal">
+        <div class="modal">
+            <div class="modal-header">Add Target</div>
+            <div class="grid-form" style="grid-template-columns: 1fr;">
+                <div class="form-group">
+                    <label for="target-name">Target Name</label>
+                    <input type="text" id="target-name" placeholder="e.g. Production VM">
+                </div>
+                <div class="form-group">
+                    <label for="target-url">Base URL</label>
+                    <input type="text" id="target-url" placeholder="e.g. http://10.0.0.5:3000">
+                </div>
+                <div class="form-group">
+                    <label for="target-token">Auth Token (Optional)</label>
+                    <input type="password" id="target-token" placeholder="RALPH_WEB_TOKEN">
+                </div>
+            </div>
+            <div class="button-row button-row-compact">
+                <button class="btn btn-secondary" onclick="closeTargetModal()">Cancel</button>
+                <button class="btn" onclick="saveTarget()">Add Target</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Modal -->
+    <div class="modal-overlay" id="context-modal">
+        <div class="modal">
+            <div class="modal-header">Add Hint / Context</div>
+            <div class="form-group">
+                <label for="context-input">Message to Ralph</label>
+                <textarea id="context-input" placeholder="e.g., 'Don't forget to update the mobile styles too' or 'Check the auth token before fetching'"></textarea>
+            </div>
+            <div class="button-row button-row-compact">
+                <button class="btn btn-secondary" onclick="closeContextModal()">Cancel</button>
+                <button class="btn" onclick="submitContext()">Add Context</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Script -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
