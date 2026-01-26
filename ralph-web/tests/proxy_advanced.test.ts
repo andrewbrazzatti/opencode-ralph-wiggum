@@ -1,16 +1,18 @@
 import { describe, expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { RalphManager } from "../src/manager";
 import { join } from "path";
-import { rmSync, mkdirSync } from "fs";
+import { rmSync, mkdirSync, mkdtempSync } from "fs";
+
+import * as os from "os";
 
 describe("Advanced Proxy Tests", () => {
-    const DATA_DIR = join(process.cwd(), "temp_test_proxy_advanced");
+    let DATA_DIR: string;
     let manager: RalphManager;
 
     beforeAll(() => {
-        mkdirSync(DATA_DIR, { recursive: true });
+        DATA_DIR = mkdtempSync(join(os.tmpdir(), "proxy_adv-"));
         manager = new RalphManager(join(DATA_DIR, "logs"), join(DATA_DIR, "runs"), undefined as any, DATA_DIR);
-        
+
         manager.addTarget({
             name: "Mock Remote",
             baseUrl: "http://mock-remote.local",
@@ -25,7 +27,7 @@ describe("Advanced Proxy Tests", () => {
     test("proxyRequest should handle SSE passthrough", async () => {
         const target = manager.listTargets()[0];
         const originalFetch = global.fetch;
-        
+
         const mockStream = new ReadableStream({
             start(controller) {
                 controller.enqueue(new TextEncoder().encode("data: hello\n\n"));
@@ -43,7 +45,7 @@ describe("Advanced Proxy Tests", () => {
         const res = await manager.proxyRequest(target.id, "GET", "/api/runs/run_1/stream");
         expect(res.status).toBe(200);
         expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-        
+
         const reader = res.body?.getReader();
         const { value } = await reader!.read();
         expect(new TextDecoder().decode(value)).toBe("data: hello\n\n");
@@ -54,7 +56,7 @@ describe("Advanced Proxy Tests", () => {
     test("proxyRequest should respect timeouts based on path", async () => {
         const target = manager.listTargets()[0];
         const originalFetch = global.fetch;
-        
+
         let capturedSignal: AbortSignal | undefined;
         (global as any).fetch = mock(async (url, init) => {
             capturedSignal = init.signal;
@@ -75,7 +77,7 @@ describe("Advanced Proxy Tests", () => {
     test("proxyRequest should handle network errors", async () => {
         const target = manager.listTargets()[0];
         const originalFetch = global.fetch;
-        
+
         (global as any).fetch = mock(async () => {
             throw new Error("Network connection failed");
         });
@@ -86,7 +88,7 @@ describe("Advanced Proxy Tests", () => {
         } catch (e: any) {
             expect(e.message).toContain("Network connection failed");
         }
-        
+
         expect(target.health?.status).toBe("unhealthy");
         expect(target.health?.error).toContain("Network connection failed");
 

@@ -55,6 +55,9 @@ You can add remote Ralph Web instances as "targets" to manage them from a single
 
 ## REST API Reference
 
+### Authentication
+If RALPH_WEB_TOKEN (environment variable) or --token (CLI option) is configured, clients must include the token as a Bearer token in the HTTP Authorization header on all API requests (e.g., Authorization: Bearer YOUR_TOKEN_HERE) to endpoints such as /api/runs and /api/targets. Requests without a valid token will receive 401 Unauthorized.
+
 ### Targets (Local Only)
 
 #### List Targets
@@ -72,9 +75,11 @@ You can add remote Ralph Web instances as "targets" to manage them from a single
 #### List Runs
 `GET /api/runs`
 - **Query Params**: `limit` (default 50), `offset` (default 0)
-- **Response**: List of run summaries from the database.
-
-#### Start Run
+`POST /api/runs`
+- **Body**: Ralph configuration options. See [CLI options](../README.md#running-a-loop) for details.
+  - Required: `prompt`
+  - Optional: `model`, `workdir`, `maxIterations`, `completionPromise`, etc.
+- **Response**: `202 Accepted` with `{ "runId": "run_..." }`
 `POST /api/runs`
 - **Body**: Standard Ralph options (`prompt`, `model`, `workdir`, etc.)
 - **Response**: `202 Accepted` with `{ "runId": "run_..." }`

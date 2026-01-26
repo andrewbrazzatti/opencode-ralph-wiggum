@@ -164,6 +164,9 @@
                                     <input type="checkbox" id="mount-docker-socket">
                                     <span>Container Has Docker (mount socket)</span>
                                 </label>
+                                <div id="docker-socket-warning" title="Mounting the Docker socket grants root-equivalent access to the host." style="display:none; margin-top:0.35rem; font-size:0.8rem; color:#f85149;">
+                                    ⚠️ Security warning: Mounting the Docker socket gives root-equivalent access to the host.
+                                </div>
                                 <div class="socket-row" style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
                                     <input type="text" id="docker-socket-host" class="input-compact" value="/var/run/docker.sock" placeholder="Host path" style="flex: 1;">
                                     <span style="align-self: center;">→</span>
@@ -302,6 +305,7 @@
                          <input class="input-compact" type="text" placeholder="Add model (e.g. mistral/large)">
                          <button class="btn btn-secondary btn-compact">Add</button>
                     </div>
+                </div>
                 <!-- Quota Widget -->
                 <div class="model-queue" id="quota-widget" style="display: none;">
                     <div class="queue-header">

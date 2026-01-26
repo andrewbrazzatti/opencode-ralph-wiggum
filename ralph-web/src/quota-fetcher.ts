@@ -1,5 +1,5 @@
 
-import { join } from "path";
+import { dirname, join } from "path";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 
@@ -44,17 +44,43 @@ interface OpenCodeAuthFile {
   };
 }
 
+const loadEnvFromFile = (filePath: string) => {
+  if (!existsSync(filePath)) return;
+  const content = readFileSync(filePath, "utf-8");
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) continue;
+    const key = trimmed.slice(0, eqIndex).trim();
+    const value = trimmed.slice(eqIndex + 1).trim();
+    if (!key || key in process.env) continue;
+    process.env[key] = value;
+  }
+};
+
+const loadEnvOnce = (() => {
+  let loaded = false;
+  return () => {
+    if (loaded) return;
+    loaded = true;
+    const cwdEnv = join(process.cwd(), ".env");
+    const execEnv = join(dirname(process.execPath ?? ""), ".env");
+    const parentEnv = join(process.cwd(), "..", ".env");
+    [cwdEnv, execEnv, parentEnv].forEach(loadEnvFromFile);
+  };
+})();
+
 // --- Google Fetcher ---
 
 class GoogleQuotaFetcher {
   private readonly quotaAPIURL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
   private readonly tokenURL = "https://oauth2.googleapis.com/token";
-  private readonly clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-  private readonly clientSecret = "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";
   private readonly userAgent = "antigravity/1.11.3 Darwin/arm64";
 
   async fetch(config: NonNullable<OpenCodeAuthFile['google']>, saveConfig: (updates: Partial<typeof config>) => void): Promise<ProviderQuotaData | null> {
     try {
+      loadEnvOnce();
       const parts = config.refresh.split("|");
       if (parts.length !== 2) return null;
       const refreshToken = parts[0];
@@ -118,9 +144,15 @@ class GoogleQuotaFetcher {
   }
 
   private async refreshToken(refreshToken: string) {
+    const clientId = process.env.OPENCODE_GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.OPENCODE_GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      throw new Error("Missing Google OAuth client credentials. Set OPENCODE_GOOGLE_CLIENT_ID and OPENCODE_GOOGLE_CLIENT_SECRET.");
+    }
+
     const params = new URLSearchParams({
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
+      client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: refreshToken,
       grant_type: "refresh_token",
     });
@@ -146,7 +178,7 @@ class ChatGPTQuotaFetcher {
   // Codex CLI client ID seen in quotio: app_EMoamEEZ73f0CkXaXp7hrann
   // Generic ones might vary. For now using the one from auth.json decoded if possible, OR hardcoding known ones.
   // The user provided auth.json shows "client_id": "app_EMoamEEZ73f0CkXaXp7hrann" in the decoded access token for Codex.
-  private readonly codexClientId = "app_EMoamEEZ73f0CkXaXp7hrann"; 
+  private readonly codexClientId = process.env.OPENCODE_OPENAI_CLIENT_ID; 
 
   private readonly userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"; // Imitate browser/desktop app
 
@@ -154,6 +186,7 @@ class ChatGPTQuotaFetcher {
 
   async fetch(config: NonNullable<OpenCodeAuthFile['openai']>, saveConfig: (updates: Partial<typeof config>) => void): Promise<ProviderQuotaData | null> {
     try {
+       loadEnvOnce();
        let accessToken = config.access;
        
        // Refresh if expired
@@ -191,6 +224,10 @@ class ChatGPTQuotaFetcher {
   }
 
   private async refreshToken(refreshToken: string) {
+      if (!this.codexClientId) {
+       throw new Error("Missing OpenAI OAuth client id. Set OPENCODE_OPENAI_CLIENT_ID.");
+      }
+
      // For standard auth.openai.com refresh
      const body = {
         grant_type: "refresh_token",

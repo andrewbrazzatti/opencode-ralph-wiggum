@@ -2,37 +2,37 @@
  * Ralph Web Frontend
  */
 
-import { 
-    getRunId, 
-    getStartedAt, 
-    normalizeRun, 
-    normalizeLogEntry, 
-    hasCurrentRun as helperHasCurrentRun, 
+import {
+    getRunId,
+    getStartedAt,
+    normalizeRun,
+    normalizeLogEntry,
+    hasCurrentRun as helperHasCurrentRun,
     shouldShowMonitor as helperShouldShowMonitor,
-    escapeHtml as helperEscapeHtml
+    escapeHtml
 } from './helpers';
 // State Interfaces
 interface LogEntry {
-  id?: number;
-  ts: string;
-  level: "info" | "warn" | "error" | "tool" | "success";
-  source: "stdout" | "stderr" | "system";
-  message: string;
-  tool?: string;
+    id?: number;
+    ts: string;
+    level: "info" | "warn" | "error" | "tool" | "success";
+    source: "stdout" | "stderr" | "system";
+    message: string;
+    tool?: string;
 }
 
 interface RunMetadata {
-  runId: string;
-  startedAt: string;
-  endedAt: string | null;
-  status: "active" | "completed" | "failed" | "stopped" | "pending" | "stopping";
-  exitCode: number | null;
-  prompt: string;
-  modelQueue: string[];
-  args: string[];
-  mode: string;
-  workdir?: string;
-  targetId?: string;
+    runId: string;
+    startedAt: string;
+    endedAt: string | null;
+    status: "active" | "completed" | "failed" | "stopped" | "pending" | "stopping";
+    exitCode: number | null;
+    prompt: string;
+    modelQueue: string[];
+    args: string[];
+    mode: string;
+    workdir?: string;
+    targetId?: string;
 }
 
 interface Target {
@@ -55,11 +55,11 @@ interface LoopState {
 }
 
 interface StatusResponse {
-  status: "active" | "idle";
-  currentRun: RunMetadata | null;
-  iterations: number;
-  loopState: LoopState | null;
-  logs: LogEntry[];
+    status: "active" | "idle";
+    currentRun: RunMetadata | null;
+    iterations: number;
+    loopState: LoopState | null;
+    logs: LogEntry[];
 }
 
 interface RunListResponse {
@@ -124,12 +124,14 @@ if (typeof document !== 'undefined') {
         setupModeSelection();
         setupContextModal();
         setupTargetModal();
+        setupTargetListEvents();
+        setupRunListEvents();
         setupModelQueueUI();
         setupTerminal();
-        
+
         // Initial Config Load
         loadConfig();
-    
+
         // Initial Data Fetch
         refreshTargets();
         refreshRuns();
@@ -139,21 +141,21 @@ if (typeof document !== 'undefined') {
         // Start Polling
         pollStatus();
         pollInterval = setInterval(pollStatus, 1000); // 1s polling
-        
+
         // Quota Polling (every 60s for UI)
         pollQuota();
         setInterval(pollQuota, 60000);
-        
+
         // Slow polling for background lists
         setInterval(() => {
             refreshTargets();
             refreshRuns();
         }, 5000);
-        
+
         // Request Notification Permission
         if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
             document.body.addEventListener('click', () => {
-                 Notification.requestPermission();
+                Notification.requestPermission();
             }, { once: true });
         }
     });
@@ -163,14 +165,14 @@ if (typeof document !== 'undefined') {
 export function checkNotifications(data: StatusResponse, notifyFn = sendNotification) {
     if (!data.currentRun) return;
     const run = data.currentRun;
-    
+
     // Detect new run
     if (run.runId !== lastRunId) {
         lastRunId = run.runId;
         lastRunStatus = run.status;
         return;
     }
-    
+
     // Detect status change
     if (run.status !== lastRunStatus) {
         if (run.status === "completed") {
@@ -208,8 +210,8 @@ async function refreshTargets() {
 
 async function refreshRuns() {
     try {
-        const endpoint = currentTargetId === 'local' 
-            ? '/api/runs?limit=20' 
+        const endpoint = currentTargetId === 'local'
+            ? '/api/runs?limit=20'
             : `/api/targets/${currentTargetId}/runs?limit=20`;
         const res = await fetch(endpoint);
         const data = await res.json() as RunListResponse;
@@ -225,7 +227,7 @@ function updateTargetListUI() {
     if (!list) return;
 
     let html = `
-        <div class="target-item ${currentTargetId === 'local' ? 'active' : ''}" onclick="selectTarget('local')">
+        <div class="target-item ${currentTargetId === 'local' ? 'active' : ''}" data-target-id="local">
             <span class="target-status online"></span>
             <span class="target-name">Local Engine</span>
         </div>
@@ -245,16 +247,16 @@ function updateTargetListUI() {
         }
 
         html += `
-            <div class="target-item ${currentTargetId === t.id ? 'active' : ''}" onclick="selectTarget('${t.id}')">
+            <div class="target-item ${currentTargetId === t.id ? 'active' : ''}" data-target-id="${escapeHtml(t.id)}">
                 <span class="target-status ${statusClass}" title="${t.health?.error || ''}"></span>
                 <span class="target-name">${escapeHtml(t.name)}</span>
-                <button class="icon-btn" onclick="deleteTarget(event, '${t.id}')" title="Delete">✕</button>
+                <button class="icon-btn" data-action="delete-target" data-target-id="${escapeHtml(t.id)}" title="Delete">✕</button>
             </div>
         `;
     });
 
     list.innerHTML = html;
-    
+
     if (healthWarning) {
         healthWarning.style.display = currentTargetUnhealthy ? 'block' : 'none';
         if (currentTargetUnhealthy) {
@@ -295,37 +297,85 @@ function updateRunListUI() {
         const startedAt = getStartedAt(r);
         const isActive = runId === currentRunId;
         const timeStr = startedAt ? new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-        
+
         let statusText = r.status;
         let statusClass = `status-text-${r.status}`;
         const canDelete = r.status !== 'active';
-        
+
         html += `
-            <div class="run-item ${isActive ? 'active-run' : ''}" onclick="selectRun('${runId}')">
+            <div class="run-item ${isActive ? 'active-run' : ''}" data-run-id="${escapeHtml(runId || '')}">
                 <div class="run-item-header">
                     <span class="run-item-status ${statusClass}">${statusText}</span>
                     <span class="run-item-time">${timeStr}</span>
                 </div>
                 <div class="run-item-prompt">
-                    ${helperEscapeHtml(r.prompt || '')}
+                    ${escapeHtml(r.prompt || '')}
                 ${r.workdir ? `
                 <div 
-                    onmouseenter="showGlobalTooltip(event, '${helperEscapeHtml(r.workdir)}')"
+                    onmouseenter="showGlobalTooltip(event, '${escapeHtml(r.workdir)}')"
                     onmouseleave="hideGlobalTooltip()"
                     style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px; font-family:monospace; display: block; overflow: visible;">
-                    📂 ${helperEscapeHtml(r.workdir.split('/').pop() || r.workdir)}
+                    📂 ${escapeHtml(r.workdir.split('/').pop() || r.workdir)}
                 </div>` : ''}
                 </div>
 
                 <div class="run-item-footer">
                     <span class="run-item-id">#${runId ? runId.slice(0, 8) : ''}</span>
-                    ${canDelete ? `<button class="icon-btn run-delete-btn" onclick="deleteRun(event, '${runId}')" title="Delete run">✕</button>` : ''}
+                    ${canDelete ? `<button class="icon-btn run-delete-btn" data-action="delete-run" data-run-id="${escapeHtml(runId || '')}" title="Delete run">✕</button>` : ''}
                 </div>
             </div>
         `;
     });
 
     list.innerHTML = html;
+}
+
+function setupTargetListEvents() {
+    const list = document.getElementById('target-list');
+    if (!list || list.dataset.bound === 'true') return;
+    list.dataset.bound = 'true';
+
+    list.addEventListener('click', (event) => {
+        const target = event.target as Element | null;
+        if (!target) return;
+
+        const deleteButton = target.closest("button[data-action='delete-target']") as HTMLElement | null;
+        if (deleteButton) {
+            const id = deleteButton.dataset.targetId;
+            if (id) (window as any).deleteTarget?.(event, id);
+            return;
+        }
+
+        const item = target.closest('.target-item[data-target-id]') as HTMLElement | null;
+        if (item) {
+            const id = item.dataset.targetId;
+            if (id) (window as any).selectTarget?.(id);
+        }
+    });
+}
+
+function setupRunListEvents() {
+    const list = document.getElementById('run-list');
+    if (!list || list.dataset.bound === 'true') return;
+    list.dataset.bound = 'true';
+
+    list.addEventListener('click', (event) => {
+        const target = event.target as Element | null;
+        if (!target) return;
+
+        const deleteButton = target.closest("button[data-action='delete-run']") as HTMLElement | null;
+        if (deleteButton) {
+            const id = deleteButton.dataset.runId;
+            if (id) (window as any).deleteRun?.(event, id);
+            return;
+        }
+
+        const item = target.closest('.run-item[data-run-id]') as HTMLElement | null;
+        if (item) {
+            const id = item.dataset.runId;
+            if (id) (window as any).selectRun?.(id);
+        }
+    });
 }
 
 if (typeof window !== 'undefined') {
@@ -391,28 +441,28 @@ async function pollQuota() {
     try {
         const res = await fetch('/api/quota');
         const data = await res.json() as QuotaResponse;
-        
+
         let hasData = false;
         let html = '';
         interface Entry { label: string; percentage: number; }
         const entries: Entry[] = [];
-        
+
         // Providers
         const providers = ['openai', 'codex', 'google']; // Display order
-        
+
         for (const provider of providers) {
             if (data[provider] && !data[provider].isForbidden) {
-                 const models = data[provider].models;
-                 if (models && models.length > 0) {
-                     hasData = true;
-                     models.forEach(m => {
-                         // Simplify name: 'openai-session' -> 'OpenAI Session'
-                         let name = m.name.replace(provider + '-', '').replace(/-/g, ' ');
-                         name = name.charAt(0).toUpperCase() + name.slice(1);
-                         const label = `${provider.charAt(0).toUpperCase() + provider.slice(1)} ${name}`;
-                         entries.push({ label, percentage: m.percentage });
-                     });
-                 }
+                const models = data[provider].models;
+                if (models && models.length > 0) {
+                    hasData = true;
+                    models.forEach(m => {
+                        // Simplify name: 'openai-session' -> 'OpenAI Session'
+                        let name = m.name.replace(provider + '-', '').replace(/-/g, ' ');
+                        name = name.charAt(0).toUpperCase() + name.slice(1);
+                        const label = `${provider.charAt(0).toUpperCase() + provider.slice(1)} ${name}`;
+                        entries.push({ label, percentage: m.percentage });
+                    });
+                }
             }
         }
 
@@ -435,7 +485,7 @@ async function pollQuota() {
                 </div>
             `;
         }
-        
+
         if (hasData) {
             list.innerHTML = html;
             container.style.display = 'block';
@@ -483,7 +533,7 @@ async function pollStatus() {
 
         const res = await fetch(endpoint);
         const data = await res.json();
-        
+
         if (currentRunId) {
             // It's a RunMetadata object + logs_count
             updateUI({
@@ -511,7 +561,7 @@ async function fetchRunLogs(runId: string) {
         const endpoint = currentTargetId === 'local'
             ? `/api/runs/${runId}/logs?limit=500`
             : `/api/targets/${currentTargetId}/runs/${runId}/logs?limit=500`;
-        
+
         const res = await fetch(endpoint);
         if (res.ok) {
             const data = await res.json();
@@ -529,7 +579,7 @@ async function fetchRunLogs(runId: string) {
 
 async function startLoop() {
     const params = getFormValues();
-    
+
     if (!params.prompt) {
         alert('Prompt is required');
         return;
@@ -542,7 +592,7 @@ async function startLoop() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(params)
         });
-        
+
         const data = await res.json();
         if (data.error) {
             alert('Error starting loop: ' + data.error);
@@ -563,12 +613,12 @@ async function startLoop() {
 
 async function stopLoop() {
     if (!confirm('Are you sure you want to stop the loop?')) return;
-    
+
     try {
-        const endpoint = currentTargetId === 'local' 
+        const endpoint = currentTargetId === 'local'
             ? (currentRunId ? `/api/runs/${currentRunId}/stop` : '/api/stop')
             : `/api/targets/${currentTargetId}/runs/${currentRunId}/stop`;
-            
+
         await fetch(endpoint, { method: 'POST' });
         pollStatus();
         refreshRuns();
@@ -579,7 +629,7 @@ async function stopLoop() {
 
 async function skipIteration() {
     if (!confirm('Skip current iteration? This will restart with a fresh attempt.')) return;
-    
+
     try {
         const endpoint = currentTargetId === 'local'
             ? (currentRunId ? `/api/runs/${currentRunId}/skip` : '/api/skip')
@@ -594,7 +644,7 @@ async function skipIteration() {
 
 async function clearLoopState() {
     if (!confirm('Delete .opencode/ralph-loop.state.json?')) return;
-    
+
     try {
         const res = await fetch('/api/state', { method: 'DELETE' });
         const data = await res.json();
@@ -611,20 +661,24 @@ async function clearLoopState() {
 async function submitContext() {
     const input = document.getElementById('context-input') as HTMLTextAreaElement;
     const text = input.value.trim();
-    
+
     if (!text) return;
-    
+
     try {
         const endpoint = currentTargetId === 'local'
             ? (currentRunId ? `/api/runs/${currentRunId}/context` : '/api/context')
-            : `/api/targets/${currentTargetId}/runs/${currentRunId}/context`;
+            : (currentRunId ? `/api/targets/${currentTargetId}/runs/${currentRunId}/context` : null);
 
+        if (!endpoint) {
+            alert('No active run to add context to');
+            return;
+        }
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ context: text })
         });
-        
+
         const data = await res.json();
         if (data.error) {
             alert('Error adding context: ' + data.error);
@@ -681,7 +735,7 @@ function exportConfig() {
         run: params,
         exportedAt: new Date().toISOString()
     };
-    
+
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -696,7 +750,7 @@ function exportConfig() {
 function handleConfigUpload(input: HTMLInputElement) {
     const file = input.files?.[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
@@ -718,12 +772,12 @@ function resetToStart() {
     stopLogStream();
     resetLogState();
     refreshRuns(); // Refresh list to show the stopped/completed run
-    updateUI({ 
-        status: 'idle', 
-        currentRun: null, 
-        iterations: 0, 
-        loopState: null, 
-        logs: [] 
+    updateUI({
+        status: 'idle',
+        currentRun: null,
+        iterations: 0,
+        loopState: null,
+        logs: []
     }); // Force update to start view
 }
 
@@ -740,11 +794,11 @@ function updateUI(data: StatusResponse) {
     clearButtons.forEach(btn => {
         if (btn) btn.style.display = hasLoopState ? 'inline-flex' : 'none';
     });
-    
+
     // Badge
     badge.textContent = isActive ? '🔄 Active' : '⏹️ Ready';
     badge.className = `status-badge ${isActive ? 'active' : ''}`;
-    
+
     // View Switching Logic - use tested helper functions
     const shouldShowMonitorView = helperShouldShowMonitor(data, forceStartView, currentRunId);
 
@@ -756,7 +810,7 @@ function updateUI(data: StatusResponse) {
         views.active.classList.remove('active');
         views.start.classList.add('active');
         stopLogStream();
-        
+
         // Reset breadcrumb
         const runNameElem = document.getElementById('current-run-name');
         if (runNameElem) runNameElem.textContent = 'New Run';
@@ -766,10 +820,10 @@ function updateUI(data: StatusResponse) {
 function updateActiveView(data: StatusResponse) {
     const run = data.currentRun;
     if (!run) return;
-    
+
     // Use helper for normalized property access
     const runId = getRunId(run);
-    
+
     // Breadcrumb
     const runNameElem = document.getElementById('current-run-name');
     if (runNameElem) {
@@ -779,13 +833,13 @@ function updateActiveView(data: StatusResponse) {
     // Header Info
     const promptElem = document.getElementById('active-prompt');
     if (promptElem) promptElem.textContent = `"${run.prompt || 'Unknown Task'}"`;
-    
+
     // Status Indicator
     const indicator = document.getElementById('run-status-indicator');
     if (indicator) {
         const dot = indicator.querySelector('.status-dot') as HTMLElement;
         const text = indicator.querySelector('.status-text') as HTMLElement;
-        
+
         if (run.status === 'active') {
             dot.style.background = '#3fb950';
             dot.style.boxShadow = '0 0 5px #3fb950';
@@ -795,16 +849,16 @@ function updateActiveView(data: StatusResponse) {
             dot.style.boxShadow = '0 0 5px #f85149';
             text.textContent = 'Failed';
         } else if (run.status === 'stopped') {
-             dot.style.background = '#d29922'; // Orange
-             dot.style.boxShadow = 'none';
-             text.textContent = 'Stopped';
+            dot.style.background = '#d29922'; // Orange
+            dot.style.boxShadow = 'none';
+            text.textContent = 'Stopped';
         } else if (run.status === 'completed') {
-             dot.style.background = '#238636'; // Darker green
-             dot.style.boxShadow = 'none';
-             text.textContent = 'Completed';
+            dot.style.background = '#238636'; // Darker green
+            dot.style.boxShadow = 'none';
+            text.textContent = 'Completed';
         }
     }
-    
+
     const btnNew = document.getElementById('btn-new-loop');
     if (btnNew) {
         btnNew.style.display = run.status === 'active' ? 'none' : 'block';
@@ -872,7 +926,7 @@ function updateActiveView(data: StatusResponse) {
 function getFormValues() {
     const modeInput = document.querySelector('input[name="mode"]:checked') as HTMLInputElement;
     const mode = modeInput.value;
-    
+
     // Use startModelQueue for the source of truth
     const modelList = startModelQueue.length > 0 ? startModelQueue : [];
     // Fallback?
@@ -893,7 +947,7 @@ function getFormValues() {
         maxIterations: parseInt(maxIterInput.value) || 0,
         completionPromise: promiseInput.value,
         mode: mode,
-        
+
         // Flags
         flags: {
             noCommit: (document.getElementById('no-commit') as HTMLInputElement).checked,
@@ -903,7 +957,7 @@ function getFormValues() {
             noStream: (document.getElementById('no-stream') as HTMLInputElement).checked
         }
     };
-    
+
     // Flatten flags
     params.noCommit = params.flags.noCommit;
     params.verboseTools = params.flags.verboseTools;
@@ -915,34 +969,34 @@ function getFormValues() {
         params.dockerImage = (document.getElementById('docker') as HTMLInputElement).value;
         params.codeDirectory = (document.getElementById('docker-codedir') as HTMLInputElement).value;
         params.dockerArgs = (document.getElementById('docker-args') as HTMLInputElement).value;
-        
+
         // Collect MANUAL volumes only (not auto-added ones)
-        const manualVols: {src: string, target: string, opts: string}[] = [];
+        const manualVols: { src: string, target: string, opts: string }[] = [];
         document.querySelectorAll('.volume-row').forEach(row => {
             const src = (row.querySelector('.vol-src') as HTMLInputElement).value.trim();
             const target = (row.querySelector('.vol-target') as HTMLInputElement).value.trim();
             const opts = (row.querySelector('.vol-opts') as HTMLInputElement).value.trim();
-            
+
             if (src && target) {
                 manualVols.push({ src, target, opts });
             }
         });
-        
+
         // Store manual volumes separately for config persistence
         params.manualDockerVolumes = manualVols;
-        
+
         // Build full volumes list (manual + auto-added) for runtime
         const allVols = [...manualVols];
-        
+
         const mountConfig = (document.getElementById('mount-opencode-config') as HTMLInputElement).checked;
         const mountData = (document.getElementById('mount-opencode-data') as HTMLInputElement).checked;
         const mountSocket = (document.getElementById('mount-docker-socket') as HTMLInputElement).checked;
-        
+
         const configPath = (document.getElementById('opencode-config-path') as HTMLInputElement).value.trim();
         const dataPath = (document.getElementById('opencode-data-path') as HTMLInputElement).value.trim();
         const socketHostPath = (document.getElementById('docker-socket-host') as HTMLInputElement).value.trim() || '/var/run/docker.sock';
         const socketContainerPath = (document.getElementById('docker-socket-container') as HTMLInputElement).value.trim() || '/var/run/docker.sock';
-        
+
         // Add auto-generated volumes to runtime list
         if (mountConfig) {
             const src = configPath || `${getHome()}/.config/opencode`;
@@ -955,12 +1009,12 @@ function getFormValues() {
         if (mountSocket) {
             allVols.push({ src: socketHostPath, target: socketContainerPath, opts: '' });
         }
-        
+
         params.dockerVolumes = allVols;
     } else if (mode === 'host') {
         params.codeDirectory = (document.getElementById('host-codedir') as HTMLInputElement).value;
     }
-    
+
     // Always capture docker settings for config persistence (regardless of current mode)
     params.docker = {
         mountOpencodeConfig: (document.getElementById('mount-opencode-config') as HTMLInputElement)?.checked ?? true,
@@ -971,33 +1025,31 @@ function getFormValues() {
         dockerSocketHostPath: (document.getElementById('docker-socket-host') as HTMLInputElement)?.value?.trim() || '/var/run/docker.sock',
         dockerSocketContainerPath: (document.getElementById('docker-socket-container') as HTMLInputElement)?.value?.trim() || '/var/run/docker.sock'
     };
-    
+
     return params;
 }
 
 function applyConfigToForm(config: any) {
-    if (!config || !config.run) return;
     const r = config.run;
-    
-    if (r.prompt !== undefined) (document.getElementById('prompt') as HTMLInputElement).value = r.prompt;
+
     if (r.prompt !== undefined) (document.getElementById('prompt') as HTMLInputElement).value = r.prompt;
     if (Array.isArray(r.modelQueue)) {
         startModelQueue = r.modelQueue;
         renderStartQueue();
     } else if (r.modelQueue) {
-         // handle string case if any
+        // handle string case if any
     }
     // Also handle legacy input just in case
     if (startModelQueue.length === 0 && (document.getElementById('model') as HTMLInputElement).value) {
-        startModelQueue = (document.getElementById('model') as HTMLInputElement).value.split(',').filter(s=>s.trim());
+        startModelQueue = (document.getElementById('model') as HTMLInputElement).value.split(',').filter(s => s.trim());
         renderStartQueue();
     }
     if (r.minIterations !== undefined) (document.getElementById('min-iterations') as HTMLInputElement).value = r.minIterations;
     if (r.maxIterations !== undefined) (document.getElementById('iterations') as HTMLInputElement).value = r.maxIterations;
     if (r.completionPromise !== undefined) (document.getElementById('promise') as HTMLInputElement).value = r.completionPromise;
-    
+
     if (r.mode) setMode(r.mode);
-    
+
     if (r.flags) {
         (document.getElementById('no-commit') as HTMLInputElement).checked = !!r.flags.noCommit;
         (document.getElementById('verbose-tools') as HTMLInputElement).checked = !!r.flags.verboseTools;
@@ -1012,7 +1064,7 @@ function applyConfigToForm(config: any) {
         else (document.getElementById('host-codedir') as HTMLInputElement).value = r.codeDirectory;
     }
     if (r.dockerArgs) (document.getElementById('docker-args') as HTMLInputElement).value = r.dockerArgs;
-    
+
     // Rebuild Docker Volumes (use manualDockerVolumes for UI, fallback to dockerVolumes for legacy)
     const volsToLoad = r.manualDockerVolumes ?? r.dockerVolumes;
     if (volsToLoad && Array.isArray(volsToLoad)) {
@@ -1020,17 +1072,17 @@ function applyConfigToForm(config: any) {
         if (list) {
             list.innerHTML = '';
             volsToLoad.forEach((vol: any) => {
-                 const id = Date.now() + Math.random().toString(16).slice(2);
-                 const div = document.createElement('div');
-                 div.className = 'volume-row';
-                 div.id = `vol-${id}`;
-                 div.innerHTML = `
+                const id = Date.now() + Math.random().toString(16).slice(2);
+                const div = document.createElement('div');
+                div.className = 'volume-row';
+                div.id = `vol-${id}`;
+                div.innerHTML = `
                     <input type="text" placeholder="Source Path (e.g. ./src)" class="vol-src" value="${escapeHtml(vol.src || '')}">
                     <input type="text" placeholder="Target Path (e.g. /app/src)" class="vol-target" value="${escapeHtml(vol.target || '')}">
                     <input type="text" placeholder="Opts (e.g. ro)" class="vol-opts" value="${escapeHtml(vol.opts || '')}">
                     <button class="icon-btn" onclick="removeVolume('${id}')" title="Remove">✕</button>
                  `;
-                 list.appendChild(div);
+                list.appendChild(div);
             });
         }
     }
@@ -1082,7 +1134,7 @@ function setupModeSelection() {
                 }
                 else card.classList.remove('active');
             });
-    
+
             document.querySelectorAll('.opts-group').forEach(el => el.classList.remove('active'));
             if (mode === 'host') document.getElementById('opts-host')?.classList.add('active');
             if (mode === 'docker') document.getElementById('opts-docker')?.classList.add('active');
@@ -1108,7 +1160,7 @@ if (typeof window !== 'undefined') {
         `;
         list.appendChild(div);
     };
-    
+
     (window as any).removeVolume = (id: string) => {
         const el = document.getElementById(`vol-${id}`);
         if (el) el.remove();
@@ -1184,7 +1236,7 @@ function updateModelQueueActive(queue?: string[], activeIndex = 0) {
 
     const list = document.getElementById('queue-list');
     if (!list) return;
-    
+
     list.innerHTML = '';
     if (!modelQueue || modelQueue.length === 0) {
         list.innerHTML = '<div class="queue-item">No models configured</div>';
@@ -1194,13 +1246,13 @@ function updateModelQueueActive(queue?: string[], activeIndex = 0) {
     modelQueue.forEach((model, idx) => {
         const item = document.createElement('div');
         item.className = `queue-item ${idx === activeIndex ? 'active' : ''}`;
-        
+
         let actions = '';
-        if (idx > 0) { 
-             actions += `<button class="icon-btn" onclick="moveModel(${idx}, -1)" title="Move Up">⬆️</button>`;
+        if (idx > 0) {
+            actions += `<button class="icon-btn" onclick="moveModel(${idx}, -1)" title="Move Up">⬆️</button>`;
         }
         if (idx < modelQueue.length - 1) {
-             actions += `<button class="icon-btn" onclick="moveModel(${idx}, 1)" title="Move Down">⬇️</button>`;
+            actions += `<button class="icon-btn" onclick="moveModel(${idx}, 1)" title="Move Down">⬇️</button>`;
         }
         actions += `<button class="icon-btn" onclick="removeModel(${idx})" title="Remove" style="color: #f85149;">✕</button>`;
 
@@ -1234,26 +1286,14 @@ if (typeof window !== 'undefined') {
     (window as any).moveModel = (idx: number, direction: number) => {
         const newIdx = idx + direction;
         if (newIdx < 0 || newIdx >= modelQueue.length) return;
-        
+
         const temp = modelQueue[idx];
         modelQueue[idx] = modelQueue[newIdx];
         modelQueue[newIdx] = temp;
-        
+
         updateModelQueueActive();
         saveQueueToBackend();
     };
-}
-
-
-// Helpers
-export function escapeHtml(text: string) {
-    if (!text) return '';
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
 }
 
 function logSignature(entry: LogEntry) {
@@ -1303,11 +1343,11 @@ async function pollLogs(runId: string) {
         const endpoint = currentTargetId === 'local'
             ? `/api/runs/${runId}/logs?limit=100${lastSeenLogId ? `&afterId=${lastSeenLogId}` : ''}`
             : `/api/targets/${currentTargetId}/runs/${runId}/logs?limit=100${lastSeenLogId ? `&afterId=${lastSeenLogId}` : ''}`;
-            
+
         const res = await fetch(endpoint);
         const data = await res.json();
         const logs = data.logs || data; // Handle both {logs, total} and raw array
-        
+
         if (Array.isArray(logs) && logs.length > 0) {
             appendLogEntries(logs);
             // Assuming the last log has an ID we can use for afterId
@@ -1346,7 +1386,7 @@ function startLogStream(runId: string) {
         : `/api/targets/${currentTargetId}/runs/${runId}/stream`;
 
     logStream = new EventSource(endpoint);
-    
+
     let connected = false;
 
     logStream.onopen = () => {
@@ -1396,9 +1436,9 @@ function resetLogState() {
 function setupTerminal() {
     if (terminal) {
         terminal.addEventListener('scroll', () => {
-             const threshold = 50;
-             const position = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
-             isScrolledToBottom = position < threshold;
+            const threshold = 50;
+            const position = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
+            isScrolledToBottom = position < threshold;
         });
     }
 }
@@ -1409,7 +1449,7 @@ if (typeof window !== 'undefined') {
     (window as any).stopLoop = stopLoop;
     (window as any).showGlobalTooltip = showGlobalTooltip;
     (window as any).hideGlobalTooltip = hideGlobalTooltip;
-    
+
     // Check if these were already exported or if I need to re-add them
     // Based on previous replace, I might have cut off submitContext...
     (window as any).loadConfig = loadConfig;
@@ -1434,32 +1474,32 @@ let tooltipEl: HTMLElement | null = null;
 
 function showGlobalTooltip(e: MouseEvent, text: string) {
     if (tooltipEl) tooltipEl.remove();
-    
+
     tooltipEl = document.createElement('div');
     tooltipEl.className = 'global-tooltip';
     tooltipEl.textContent = text; // Already escaped in invocation if needed, but textContent is safe
-    
+
     document.body.appendChild(tooltipEl);
-    
+
     const target = e.target as HTMLElement;
     const rect = target.getBoundingClientRect();
-    
+
     // Position above centered
     const tooltipRect = tooltipEl.getBoundingClientRect();
     let top = rect.top - tooltipRect.height - 8;
     let left = rect.left + (rect.width - tooltipRect.width) / 2;
-    
+
     // Prevent top overflow
     if (top < 0) {
         top = rect.bottom + 8; // flip to bottom
     }
-    
+
     // Prevent horizontal overflow
     if (left < 0) left = 10;
     if (left + tooltipRect.width > window.innerWidth) {
         left = window.innerWidth - tooltipRect.width - 10;
     }
-    
+
     tooltipEl.style.top = `${top}px`;
     tooltipEl.style.left = `${left}px`;
 }
@@ -1489,11 +1529,11 @@ async function fetchModels() {
                     opt.textContent = m;
                     select.appendChild(opt);
                 });
-                
+
                 // Pre-populate if empty
                 if (startModelQueue.length === 0) {
-                     // Maybe add defaults if needed, or just leave empty
-                     // Default from previous config if applied
+                    // Maybe add defaults if needed, or just leave empty
+                    // Default from previous config if applied
                 }
             }
         }
@@ -1533,18 +1573,18 @@ function removeStartModel(idx: number) {
 function moveStartModel(idx: number, direction: number) {
     const newIdx = idx + direction;
     if (newIdx < 0 || newIdx >= startModelQueue.length) return;
-    
+
     const temp = startModelQueue[idx];
     startModelQueue[idx] = startModelQueue[newIdx];
     startModelQueue[newIdx] = temp;
-    
+
     renderStartQueue();
 }
 
 function renderStartQueue() {
     const list = document.getElementById('start-queue-list');
     if (!list) return;
-    
+
     list.innerHTML = '';
     if (startModelQueue.length === 0) {
         list.innerHTML = '<div class="queue-empty-state">No models selected</div>';
@@ -1556,13 +1596,13 @@ function renderStartQueue() {
     startModelQueue.forEach((model, idx) => {
         const item = document.createElement('div');
         item.className = 'queue-item';
-        
+
         let actions = '';
-        if (idx > 0) { 
-             actions += `<button class="icon-btn" onclick="moveStartModel(${idx}, -1)" title="Move Up">⬆️</button>`;
+        if (idx > 0) {
+            actions += `<button class="icon-btn" onclick="moveStartModel(${idx}, -1)" title="Move Up">⬆️</button>`;
         }
         if (idx < startModelQueue.length - 1) {
-             actions += `<button class="icon-btn" onclick="moveStartModel(${idx}, 1)" title="Move Down">⬇️</button>`;
+            actions += `<button class="icon-btn" onclick="moveStartModel(${idx}, 1)" title="Move Down">⬇️</button>`;
         }
         actions += `<button class="icon-btn" onclick="removeStartModel(${idx})" title="Remove" style="color: #f85149;">✕</button>`;
 
@@ -1577,7 +1617,7 @@ function renderStartQueue() {
         `;
         list.appendChild(item);
     });
-    
+
     // Update hidden input for legacy or config saving
     (document.getElementById('model') as HTMLInputElement).value = startModelQueue.join(', ');
 }

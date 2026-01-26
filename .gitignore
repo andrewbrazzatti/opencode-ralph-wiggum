@@ -86,3 +86,4 @@ redbox/build_context/
 
 .opencode/
 .test-state-env/
+.env

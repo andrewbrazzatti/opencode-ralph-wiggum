@@ -71,6 +71,8 @@ if (typeof document !== "undefined") {
     setupModeSelection();
     setupContextModal();
     setupTargetModal();
+    setupTargetListEvents();
+    setupRunListEvents();
     setupModelQueueUI();
     setupTerminal();
     loadConfig();
@@ -146,7 +148,7 @@ function updateTargetListUI() {
   if (!list)
     return;
   let html = `
-        <div class="target-item ${currentTargetId === "local" ? "active" : ""}" onclick="selectTarget('local')">
+        <div class="target-item ${currentTargetId === "local" ? "active" : ""}" data-target-id="local">
             <span class="target-status online"></span>
             <span class="target-name">Local Engine</span>
         </div>
@@ -165,10 +167,10 @@ function updateTargetListUI() {
         currentTargetUnhealthy = true;
     }
     html += `
-            <div class="target-item ${currentTargetId === t.id ? "active" : ""}" onclick="selectTarget('${t.id}')">
+            <div class="target-item ${currentTargetId === t.id ? "active" : ""}" data-target-id="${escapeHtml(t.id)}">
                 <span class="target-status ${statusClass}" title="${t.health?.error || ""}"></span>
-                <span class="target-name">${escapeHtml2(t.name)}</span>
-                <button class="icon-btn" onclick="deleteTarget(event, '${t.id}')" title="Delete">✕</button>
+                <span class="target-name">${escapeHtml(t.name)}</span>
+                <button class="icon-btn" data-action="delete-target" data-target-id="${escapeHtml(t.id)}" title="Delete">✕</button>
             </div>
         `;
   });
@@ -212,7 +214,7 @@ function updateRunListUI() {
     let statusClass = `status-text-${r.status}`;
     const canDelete = r.status !== "active";
     html += `
-            <div class="run-item ${isActive ? "active-run" : ""}" onclick="selectRun('${runId}')">
+            <div class="run-item ${isActive ? "active-run" : ""}" data-run-id="${escapeHtml(runId || "")}">
                 <div class="run-item-header">
                     <span class="run-item-status ${statusClass}">${statusText}</span>
                     <span class="run-item-time">${timeStr}</span>
@@ -230,12 +232,60 @@ function updateRunListUI() {
 
                 <div class="run-item-footer">
                     <span class="run-item-id">#${runId ? runId.slice(0, 8) : ""}</span>
-                    ${canDelete ? `<button class="icon-btn run-delete-btn" onclick="deleteRun(event, '${runId}')" title="Delete run">✕</button>` : ""}
+                    ${canDelete ? `<button class="icon-btn run-delete-btn" data-action="delete-run" data-run-id="${escapeHtml(runId || "")}" title="Delete run">✕</button>` : ""}
                 </div>
             </div>
         `;
   });
   list.innerHTML = html;
+}
+function setupTargetListEvents() {
+  const list = document.getElementById("target-list");
+  if (!list || list.dataset.bound === "true")
+    return;
+  list.dataset.bound = "true";
+  list.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!target)
+      return;
+    const deleteButton = target.closest("button[data-action='delete-target']");
+    if (deleteButton) {
+      const id = deleteButton.dataset.targetId;
+      if (id)
+        window.deleteTarget?.(event, id);
+      return;
+    }
+    const item = target.closest(".target-item[data-target-id]");
+    if (item) {
+      const id = item.dataset.targetId;
+      if (id)
+        window.selectTarget?.(id);
+    }
+  });
+}
+function setupRunListEvents() {
+  const list = document.getElementById("run-list");
+  if (!list || list.dataset.bound === "true")
+    return;
+  list.dataset.bound = "true";
+  list.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!target)
+      return;
+    const deleteButton = target.closest("button[data-action='delete-run']");
+    if (deleteButton) {
+      const id = deleteButton.dataset.runId;
+      if (id)
+        window.deleteRun?.(event, id);
+      return;
+    }
+    const item = target.closest(".run-item[data-run-id]");
+    if (item) {
+      const id = item.dataset.runId;
+      if (id)
+        window.selectRun?.(id);
+    }
+  });
 }
 if (typeof window !== "undefined") {
   window.selectTarget = (id) => {
@@ -747,11 +797,7 @@ function getFormValues() {
   return params;
 }
 function applyConfigToForm(config) {
-  if (!config || !config.run)
-    return;
   const r = config.run;
-  if (r.prompt !== undefined)
-    document.getElementById("prompt").value = r.prompt;
   if (r.prompt !== undefined)
     document.getElementById("prompt").value = r.prompt;
   if (Array.isArray(r.modelQueue)) {
@@ -798,9 +844,9 @@ function applyConfigToForm(config) {
         div.className = "volume-row";
         div.id = `vol-${id}`;
         div.innerHTML = `
-                    <input type="text" placeholder="Source Path (e.g. ./src)" class="vol-src" value="${escapeHtml2(vol.src || "")}">
-                    <input type="text" placeholder="Target Path (e.g. /app/src)" class="vol-target" value="${escapeHtml2(vol.target || "")}">
-                    <input type="text" placeholder="Opts (e.g. ro)" class="vol-opts" value="${escapeHtml2(vol.opts || "")}">
+                    <input type="text" placeholder="Source Path (e.g. ./src)" class="vol-src" value="${escapeHtml(vol.src || "")}">
+                    <input type="text" placeholder="Target Path (e.g. /app/src)" class="vol-target" value="${escapeHtml(vol.target || "")}">
+                    <input type="text" placeholder="Opts (e.g. ro)" class="vol-opts" value="${escapeHtml(vol.opts || "")}">
                     <button class="icon-btn" onclick="removeVolume('${id}')" title="Remove">✕</button>
                  `;
         list.appendChild(div);
@@ -961,7 +1007,7 @@ function updateModelQueueActive(queue, activeIndex = 0) {
     item.innerHTML = `
             <div class="queue-item-name">
                 <span class="queue-badge ${idx === activeIndex ? "badge-active" : "badge-pending"}">${badgeLabel}</span>
-                <span>${escapeHtml2(model)}</span>
+                <span>${escapeHtml(model)}</span>
             </div>
             <div class="queue-actions">
                 ${idx === activeIndex ? '<span style="font-size: 0.8rem; color: var(--text-secondary); margin-right: 0.5rem;">Running...</span>' : ""}
@@ -990,11 +1036,6 @@ if (typeof window !== "undefined") {
     saveQueueToBackend();
   };
 }
-function escapeHtml2(text) {
-  if (!text)
-    return "";
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-}
 function logSignature(entry) {
   if (!entry)
     return "";
@@ -1013,7 +1054,7 @@ function appendLogEntry(log) {
   if (log.tool) {
     html += `<span class="log-tool">${log.tool}</span> `;
   }
-  html += escapeHtml2(log.message);
+  html += escapeHtml(log.message);
   div.innerHTML = html;
   terminal.appendChild(div);
   lastLogSignature = signature;
@@ -1246,7 +1287,7 @@ function renderStartQueue() {
     item.innerHTML = `
             <div class="queue-item-name">
                 <span class="queue-badge badge-pending">${idx + 1}</span>
-                <span>${escapeHtml2(model)}</span>
+                <span>${escapeHtml(model)}</span>
             </div>
             <div class="queue-actions">
                 ${actions}
@@ -1258,6 +1299,5 @@ function renderStartQueue() {
 }
 export {
   resetNotificationState,
-  escapeHtml2 as escapeHtml,
   checkNotifications
 };

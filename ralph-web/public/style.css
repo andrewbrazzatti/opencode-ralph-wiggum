@@ -573,15 +573,18 @@ textarea {
     right: 0;
     background: rgba(0,0,0,0.7);
     backdrop-filter: blur(4px);
-    display: none;
+    display: flex;
     align-items: center;
     justify-content: center;
     z-index: 100;
-    animation: fadeIn 0.2s;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
 .modal-overlay.open {
-    display: flex;
+    opacity: 1;
+    visibility: visible;
 }
 
 .modal {

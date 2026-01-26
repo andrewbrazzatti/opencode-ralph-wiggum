@@ -1,8 +1,9 @@
 import { describe, expect, test, mock, beforeEach } from "bun:test";
-import { checkNotifications, escapeHtml, resetNotificationState } from "../../src/client/app";
+import { checkNotifications, resetNotificationState } from "../../src/client/app";
+import { escapeHtml } from "../../src/client/helpers";
 
 describe("Client App Tests", () => {
-    
+
     describe("escapeHtml", () => {
         test("should escape special characters", () => {
             expect(escapeHtml("<div>")).toBe("&lt;div&gt;");
@@ -41,32 +42,32 @@ describe("Client App Tests", () => {
             // Update to completed
             data.currentRun.status = "completed";
             checkNotifications(data, notifyMock);
-            
+
             expect(notifyMock).toHaveBeenCalledTimes(1);
             expect(notifyMock).toHaveBeenCalledWith("Ralph Loop Completed", expect.stringContaining("successfully"));
         });
 
         test("should notify on failure", () => {
-             const data: any = {
+            const data: any = {
                 currentRun: {
                     runId: "run2",
                     status: "active"
                 }
             };
-            
+
             // Initial
             checkNotifications(data, notifyMock);
-            
+
             // Fail
             data.currentRun.status = "failed";
             checkNotifications(data, notifyMock);
-            
+
             expect(notifyMock).toHaveBeenCalledTimes(1);
             expect(notifyMock).toHaveBeenCalledWith("Ralph Loop Failed", expect.stringContaining("error"));
         });
 
         test("should not notify if status hasn't changed", () => {
-             const data: any = {
+            const data: any = {
                 currentRun: {
                     runId: "run3",
                     status: "active"

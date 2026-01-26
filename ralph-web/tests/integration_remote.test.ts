@@ -1,20 +1,23 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { spawn } from "bun";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
+import * as fs from "fs";
 import { join } from "path";
 
 const PORT_LOCAL = 46000;
 const PORT_REMOTE = 46001;
-const DIR_LOCAL = join(process.cwd(), "temp_integration_local");
-const DIR_REMOTE = join(process.cwd(), "temp_integration_remote");
+
+import * as os from "os";
 
 describe("Remote Integration", () => {
     let localProc: any;
     let remoteProc: any;
+    let DIR_LOCAL: string;
+    let DIR_REMOTE: string;
 
     beforeAll(async () => {
-        mkdirSync(DIR_LOCAL, { recursive: true });
-        mkdirSync(DIR_REMOTE, { recursive: true });
+        DIR_LOCAL = fs.mkdtempSync(join(os.tmpdir(), "integration_local-"));
+        DIR_REMOTE = fs.mkdtempSync(join(os.tmpdir(), "integration_remote-"));
 
         // Dummy ralph for remote
         const dummyRalph = join(DIR_REMOTE, "ralph.sh");
@@ -33,7 +36,7 @@ describe("Remote Integration", () => {
             try {
                 const res = await fetch(`http://localhost:${PORT_REMOTE}/api/status`);
                 if (res.ok) break;
-            } catch (e) {}
+            } catch (e) { }
             await new Promise(r => setTimeout(r, 200));
         }
 
@@ -48,7 +51,7 @@ describe("Remote Integration", () => {
             try {
                 const res = await fetch(`http://localhost:${PORT_LOCAL}/api/status`);
                 if (res.ok) break;
-            } catch (e) {}
+            } catch (e) { }
             await new Promise(r => setTimeout(r, 200));
         }
     });
@@ -92,7 +95,7 @@ describe("Remote Integration", () => {
         const streamRes = await fetch(`http://localhost:${PORT_LOCAL}/api/targets/${targetId}/runs/${runId}/stream`);
         expect(streamRes.status).toBe(200);
         expect(streamRes.headers.get("Content-Type")).toBe("text/event-stream");
-        
+
         const reader = streamRes.body?.getReader();
         const { value } = await reader!.read();
         const text = new TextDecoder().decode(value);

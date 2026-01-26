@@ -1,14 +1,16 @@
 import { describe, expect, test, mock, beforeAll, afterAll } from "bun:test";
 import { RalphManager } from "../src/manager";
 import { join } from "path";
-import { rmSync, mkdirSync } from "fs";
+import { rmSync, mkdirSync, mkdtempSync } from "fs";
+
+import * as os from "os";
 
 describe("Network Resiliency", () => {
-    const DATA_DIR = join(process.cwd(), "temp_test_network");
+    let DATA_DIR: string;
     let manager: RalphManager;
 
     beforeAll(() => {
-        mkdirSync(DATA_DIR, { recursive: true });
+        DATA_DIR = mkdtempSync(join(os.tmpdir(), "network-"));
         manager = new RalphManager(join(DATA_DIR, "logs"), join(DATA_DIR, "runs"), undefined as any, DATA_DIR);
         manager.addTarget({
             name: "Remote",
@@ -47,7 +49,7 @@ describe("Network Resiliency", () => {
         } catch (e: any) {
             expect(e.name).toBe("AbortError");
         }
-        
+
         expect(target.health?.status).toBe("unhealthy");
         expect(target.health?.error).toContain("timed out or was aborted");
 

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "bun ralph.ts",
-    "build": "bun build ralph.ts --outfile bin/ralph --compile",
+    "build": "bun build ralph.ts --outfile bin/ralph --compile && bun scripts/copy-env.ts",
     "test": "bun test ./tests",
     "install-local": "bun link"
   },

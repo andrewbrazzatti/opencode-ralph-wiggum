@@ -35,15 +35,15 @@ export class RalphManager {
 
     public logs: LogEntry[] = [];
     public iterations: number = 0;
-    
+
     private retentionDays: number = parseInt(process.env.RALPH_WEB_STATE_RETENTION_DAYS || "7");
-    
+
     // Made public/protected for testing if needed, or keep private
-    private proc: any = null; 
+    private proc: any = null;
     private logFile: string | null = null;
     private logListeners: Set<(entry: LogEntry) => void> = new Set();
     private db: RalphDatabase;
-    
+
     // Injectable paths and spawner for testing
     constructor(
         private logsDir: string = join(process.cwd(), ".opencode/ralph-web/logs"),
@@ -108,12 +108,13 @@ export class RalphManager {
         if (!masterKey || !text || text.startsWith("enc:")) return text;
 
         try {
+            const salt = randomBytes(16);
             const iv = randomBytes(16);
-            const key = scryptSync(masterKey, 'salt', 32);
+            const key = scryptSync(masterKey, salt, 32);
             const cipher = createCipheriv('aes-256-cbc', key, iv);
             let encrypted = cipher.update(text, 'utf8', 'hex');
             encrypted += cipher.final('hex');
-            return `enc:${iv.toString('hex')}:${encrypted}`;
+            return `enc:${salt.toString('hex')}:${iv.toString('hex')}:${encrypted}`;
         } catch (e) {
             console.error("Encryption failed:", e);
             return text;
@@ -127,11 +128,15 @@ export class RalphManager {
 
         try {
             const parts = text.split(":");
-            if (parts.length !== 3) return text;
+            if (parts.length !== 4 && parts.length !== 3) return text;
 
-            const iv = Buffer.from(parts[1], 'hex');
-            const encryptedText = parts[2];
-            const key = scryptSync(masterKey, 'salt', 32);
+            const hasSalt = parts.length === 4;
+            const saltHex = hasSalt ? parts[1] : "salt";
+            const ivHex = hasSalt ? parts[2] : parts[1];
+            const encryptedText = hasSalt ? parts[3] : parts[2];
+            const salt = hasSalt ? Buffer.from(saltHex, 'hex') : "salt";
+            const iv = Buffer.from(ivHex, 'hex');
+            const key = scryptSync(masterKey, salt, 32);
             const decipher = createDecipheriv('aes-256-cbc', key, iv);
             let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
             decrypted += decipher.final('utf8');
@@ -211,11 +216,11 @@ export class RalphManager {
         }
 
         const url = `${target.baseUrl}${path}`;
-        
+
         // Default timeouts: 5s for status/list, 30s for start/stop/context/skip
         // We use 30s as a general default unless specified
         const timeout = path.includes("/stream") ? 0 : (path.includes("/status") || path === "/api/runs" ? 5000 : 30000);
-        
+
         let timeoutId: any;
         const controller = new AbortController();
         if (timeout > 0) {
@@ -243,7 +248,7 @@ export class RalphManager {
                 };
                 this.saveTargets();
             } else if (response.ok) {
-                 target.health = {
+                target.health = {
                     status: "healthy",
                     lastCheck: new Date().toISOString()
                 };
@@ -253,7 +258,7 @@ export class RalphManager {
             return response;
         } catch (e: any) {
             if (timeoutId) clearTimeout(timeoutId);
-            
+
             let errorMessage = String(e);
             if (e.name === "AbortError") {
                 errorMessage = "Request timed out or was aborted";
@@ -365,7 +370,7 @@ export class RalphManager {
                 stdout: "pipe",
                 stderr: "pipe"
             });
-            
+
             const text = await new Response(proc.stdout as any).text();
             return text.split("\n").map(m => m.trim()).filter(m => m);
         } catch (e) {
@@ -376,7 +381,7 @@ export class RalphManager {
 
     async start(params: any): Promise<string> {
         const workdir = params.codeDirectory || params.workdir || process.cwd();
-        
+
         // Concurrency guardrails (hard block same workdir)
         for (const controller of this.runs.values()) {
             if (controller.metadata.status === "active" && controller.metadata.workdir === workdir) {
@@ -389,7 +394,7 @@ export class RalphManager {
         const modelQueue = Array.isArray(params.modelQueue) && params.modelQueue.length > 0
             ? params.modelQueue
             : (params.model ? [params.model] : []);
-        
+
         const startedAt = new Date().toISOString();
         const metadata: RunMetadata = {
             runId,
@@ -427,7 +432,7 @@ export class RalphManager {
 
         const controller = new RunController(metadata, this.logsDir, this.db, this.spawner);
         this.runs.set(runId, controller);
-        
+
         // Listen to logs for legacy support and global listeners
         controller.addLogListener((entry) => {
             this.logs.push(entry);
@@ -487,13 +492,13 @@ export class RalphManager {
 
         const stateDir = join(this.runsDir, "../state", id);
         const signalPath = join(stateDir, "ralph-skip.signal");
-        
+
         try {
             if (!existsSync(stateDir)) {
                 mkdirSync(stateDir, { recursive: true });
             }
             writeFileSync(signalPath, "");
-            
+
             const controller = this.runs.get(id);
             if (controller) {
                 controller.systemLog("info", "Skip signal sent");
@@ -507,13 +512,13 @@ export class RalphManager {
     async addContext(text: string, runId?: string) {
         const id = runId || this.currentRun?.runId;
         if (!id) return;
-        
+
         const controller = this.runs.get(id);
 
         const cmd = ["--add-context", text];
         const stateDir = join(this.runsDir, "../state", id);
         cmd.push("--state-dir", stateDir);
-        
+
         let binCommand: string[];
         try {
             binCommand = await this.getCliCommand();
@@ -548,7 +553,7 @@ export class RalphManager {
 
     private buildArgs(params: any, runId?: string): string[] {
         const args: string[] = [];
-        
+
         if (params.prompt) args.push(params.prompt);
         const modelQueue = Array.isArray(params.modelQueue) ? params.modelQueue.filter(Boolean) : [];
         const modelArg = modelQueue.length > 0 ? modelQueue.join(",") : params.model;
@@ -556,12 +561,12 @@ export class RalphManager {
         if (params.minIterations) args.push("--min-iterations", String(params.minIterations));
         if (params.maxIterations) args.push("--max-iterations", String(params.maxIterations));
         if (params.completionPromise) args.push("--completion-promise", params.completionPromise);
-        
+
         if (params.mode === "docker") {
             if (params.dockerImage) args.push("--docker-image", params.dockerImage);
-            
+
             let dArgs = params.dockerArgs || "";
-            
+
             // Handle Code Directory: mount to /workspace/code and set as working dir
             if (params.codeDirectory) {
                 dArgs += ` -v ${params.codeDirectory}:/workspace/code`;
@@ -577,7 +582,7 @@ export class RalphManager {
                     }
                 });
             }
-            
+
             if (dArgs.trim()) args.push("--docker-args", dArgs.trim());
         }
 
@@ -590,16 +595,16 @@ export class RalphManager {
         // Pass DB args
         const dbPath = join(this.runsDir, "../ralph.sqlite"); // Assuming runsDir is .opencode/ralph-web/runs
         args.push("--db-path", dbPath);
-        
+
         if (runId) {
-             args.push("--run-id", runId);
-             // Assign per-run stateDir
-             const stateDir = join(this.runsDir, "../state", runId);
-             args.push("--state-dir", stateDir);
+            args.push("--run-id", runId);
+            // Assign per-run stateDir
+            const stateDir = join(this.runsDir, "../state", runId);
+            args.push("--state-dir", stateDir);
         } else if (this.currentRun?.runId) {
-             args.push("--run-id", this.currentRun.runId);
-             const stateDir = join(this.runsDir, "../state", this.currentRun.runId);
-             args.push("--state-dir", stateDir);
+            args.push("--run-id", this.currentRun.runId);
+            const stateDir = join(this.runsDir, "../state", this.currentRun.runId);
+            args.push("--state-dir", stateDir);
         }
 
         return args;
@@ -614,7 +619,7 @@ export class RalphManager {
             message
         };
         this.logs.push(entry);
-        
+
         for (const listener of this.logListeners) {
             listener(entry);
         }

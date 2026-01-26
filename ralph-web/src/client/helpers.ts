@@ -82,7 +82,7 @@ export function normalizeRun(run: any): RunMetadata | null {
         workdir: run.workdir,
         targetId: run.targetId || run.target_id,
         model: run.model,
-        maxIterations: run.maxIterations || run.max_iterations,
+        maxIterations: run.maxIterations ?? run.max_iterations,
         iteration: run.iteration
     };
 }

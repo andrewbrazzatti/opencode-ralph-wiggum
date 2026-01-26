@@ -33,16 +33,17 @@ export class RalphDatabase {
 
     constructor(dataDir: string) {
         let dbPath = ":memory:";
-        
+
         if (dataDir !== ":memory:") {
             if (!existsSync(dataDir)) {
                 mkdirSync(dataDir, { recursive: true });
             }
             dbPath = join(dataDir, "ralph.sqlite");
         }
-        
+
+
         this.db = new Database(dbPath, { create: true });
-        
+
         this.initSchema();
     }
 
@@ -53,7 +54,8 @@ export class RalphDatabase {
     private initSchema() {
         // Enable WAL mode for better concurrency
         this.db.exec("PRAGMA journal_mode = WAL;");
-        
+        // Enable foreign key enforcement
+        this.db.exec("PRAGMA foreign_keys = ON;");
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
@@ -114,7 +116,7 @@ export class RalphDatabase {
             INSERT INTO runs (id, status, prompt, config, created_at, started_at, ended_at, exit_code, workdir, state_dir, target_id, target_type)
             VALUES ($id, $status, $prompt, $config, $created_at, $started_at, $ended_at, $exit_code, $workdir, $state_dir, $target_id, $target_type)
         `);
-        
+
         stmt.run({
             $id: run.id,
             $status: run.status,
@@ -137,7 +139,7 @@ export class RalphDatabase {
             SET state = $state
             WHERE id = $id
         `);
-        
+
         stmt.run({
             $id: id,
             $state: state
@@ -150,7 +152,7 @@ export class RalphDatabase {
             SET status = $status, ended_at = $ended_at, exit_code = $exit_code
             WHERE id = $id
         `);
-        
+
         stmt.run({
             $id: id,
             $status: status,
@@ -181,10 +183,10 @@ export class RalphDatabase {
             const result = this.db.prepare("DELETE FROM runs WHERE id = ?").run(id);
             return result.changes > 0;
         });
-        
+
         return deleteTransaction();
     }
-    
+
     // --- Logs ---
 
     insertLog(log: LogRecord) {
@@ -192,7 +194,7 @@ export class RalphDatabase {
             INSERT INTO logs (run_id, timestamp, level, source, message, tool_name)
             VALUES ($run_id, $timestamp, $level, $source, $message, $tool_name)
         `);
-        
+
         stmt.run({
             $run_id: log.run_id,
             $timestamp: log.timestamp,
@@ -208,7 +210,7 @@ export class RalphDatabase {
             INSERT INTO logs (run_id, timestamp, level, source, message, tool_name)
             VALUES ($run_id, $timestamp, $level, $source, $message, $tool_name)
         `);
-        
+
         const transaction = this.db.transaction((logs: LogRecord[]) => {
             for (const log of logs) {
                 insert.run({
@@ -221,16 +223,16 @@ export class RalphDatabase {
                 });
             }
         });
-        
+
         transaction(logs);
     }
 
     getRunLogs(runId: string, limit: number = 1000, offset: number = 0, level?: string, afterId?: number): { logs: LogRecord[], total: number } {
         let query = "SELECT * FROM logs WHERE run_id = $run_id";
         let countQuery = "SELECT COUNT(*) as count FROM logs WHERE run_id = $run_id";
-        
+
         const params: any = { $run_id: runId };
-        
+
         if (level) {
             query += " AND level = $level";
             countQuery += " AND level = $level";
@@ -242,18 +244,18 @@ export class RalphDatabase {
             countQuery += " AND id > $afterId";
             params.$afterId = afterId;
         }
-        
+
         query += " ORDER BY id ASC LIMIT $limit OFFSET $offset";
         params.$limit = limit;
         params.$offset = offset;
-        
+
         const logs = this.db.prepare(query).all(params) as LogRecord[];
-        const count = this.db.prepare(countQuery).get({ 
-            $run_id: runId, 
+        const count = this.db.prepare(countQuery).get({
+            $run_id: runId,
             ...(level ? { $level: level } : {}),
             ...(afterId !== undefined ? { $afterId: afterId } : {})
         }) as { count: number };
-        
+
         return { logs, total: count.count };
     }
 }

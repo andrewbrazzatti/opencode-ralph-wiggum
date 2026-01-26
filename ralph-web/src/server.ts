@@ -18,14 +18,35 @@ let corsOrigin = process.env.CORS_ORIGIN || "";
 
 for (let i = 0; i < args.length; i++) {
     if (args[i] === "--port" || args[i] === "-p") {
-        port = parseInt(args[++i]);
+        if (args[i + 1] === undefined) {
+            console.error("Missing value for --port/-p");
+            process.exit(1);
+        }
+        const parsed = Number.parseInt(args[++i], 10);
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > 65535) {
+            console.error("Invalid --port/-p value. Expected an integer between 1 and 65535.");
+            process.exit(1);
+        }
+        port = parsed;
     } else if (args[i] === "--host" || args[i] === "-h") {
+        if (args[i + 1] === undefined) {
+            console.error("Missing value for --host/-h");
+            process.exit(1);
+        }
         host = args[++i];
     } else if (args[i] === "--expose") {
         host = "0.0.0.0";
     } else if (args[i] === "--token") {
+        if (args[i + 1] === undefined) {
+            console.error("Missing value for --token");
+            process.exit(1);
+        }
         authToken = args[++i];
     } else if (args[i] === "--cors-origin") {
+        if (args[i + 1] === undefined) {
+            console.error("Missing value for --cors-origin");
+            process.exit(1);
+        }
         corsOrigin = args[++i];
     }
 }
@@ -349,19 +370,24 @@ export const handleApiRequest = async (req: Request, url: URL): Promise<Response
                 const encoder = new TextEncoder();
                 // Send initial state
                 streamController.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify(runController.metadata)}\n\n`));
-                
-                // Send existing logs
-                for (const log of runController.logs) {
-                    streamController.enqueue(encoder.encode(`event: log\ndata: ${JSON.stringify(log)}\n\n`));
-                }
+
+                let lastSentIndex = -1;
 
                 const logListener = (entry: LogEntry) => {
                     try {
+                        const index = runController.logs.lastIndexOf(entry);
+                        if (index <= lastSentIndex) return;
                         streamController.enqueue(encoder.encode(`event: log\ndata: ${JSON.stringify(entry)}\n\n`));
                     } catch { /* closed */ }
                 };
-                
+
                 runController.addLogListener(logListener);
+
+                lastSentIndex = runController.logs.length - 1;
+                const existingLogs = runController.logs.slice(0, lastSentIndex + 1);
+                for (const log of existingLogs) {
+                    streamController.enqueue(encoder.encode(`event: log\ndata: ${JSON.stringify(log)}\n\n`));
+                }
 
                 const heartbeat = setInterval(() => {
                     try {

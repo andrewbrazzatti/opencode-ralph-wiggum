@@ -1,14 +1,16 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { RalphDatabase } from "../src/db";
 import { join } from "path";
-import { rmSync, mkdirSync } from "fs";
+import { rmSync, mkdirSync, mkdtempSync } from "fs";
+
+import * as os from "os";
 
 describe("Database afterId", () => {
-    const DATA_DIR = join(process.cwd(), "temp_test_db_afterid");
+    let DATA_DIR: string;
     let db: RalphDatabase;
 
     beforeAll(() => {
-        mkdirSync(DATA_DIR, { recursive: true });
+        DATA_DIR = mkdtempSync(join(os.tmpdir(), "db_afterid-"));
         db = new RalphDatabase(DATA_DIR);
     });
 
@@ -37,7 +39,7 @@ describe("Database afterId", () => {
 
         const allLogs = db.getRunLogs(runId);
         expect(allLogs.logs.length).toBe(3);
-        
+
         const firstId = allLogs.logs[0].id!;
         const remainingLogs = db.getRunLogs(runId, 1000, 0, undefined, firstId);
         expect(remainingLogs.logs.length).toBe(2);
